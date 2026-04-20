@@ -1,31 +1,34 @@
 /**
- * Browser-side Supabase client.
+ * Browser-side Supabase client factory.
  *
- * The anon key is safe to ship; RLS is what keeps other users' data out.
- * When a Clerk JWT is available we attach it via `global.headers` so that
- * `public.clerk_user_id()` can read it inside Postgres.
+ * Today, all data access in the browser is routed through `/api/*` so we don't
+ * actually construct a Supabase client in the page. This helper is kept for
+ * the day we add a direct-to-Supabase read path (realtime, presence). When
+ * you do, always call `supabase(token)` with a fresh Clerk JWT — the anon key
+ * alone is safe, but our RLS requires a `sub` claim in the Authorization
+ * header to match rows on `clerk_user_id`.
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-let client: SupabaseClient | null = null;
+// Cache one client per token so Realtime / PostgREST connections aren't rebuilt
+// on every render. The `null` key covers the anon-only case.
+const clients = new Map<string, SupabaseClient>();
 
 export function supabase(token?: string | null): SupabaseClient {
   if (!url || !key) {
     throw new Error('VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not configured');
   }
-  if (!client) {
-    client = createClient(url, key, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-  }
-  // Re-apply Authorization header if a new token is provided.
-  if (token) {
-    // @ts-expect-error — rest client exposes this internally
-    client.rest.headers.Authorization = `Bearer ${token}`;
-  }
+  const cacheKey = token ?? '';
+  const existing = clients.get(cacheKey);
+  if (existing) return existing;
+  const client = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
+  });
+  clients.set(cacheKey, client);
   return client;
 }
 

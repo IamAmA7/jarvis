@@ -16,6 +16,8 @@ export default async function handler(req: Request): Promise<Response> {
       plan: q.plan,
       usedSec: q.usedSec,
       limitSec: q.limitSec,
+      usedInsights: q.usedInsights,
+      limitInsights: q.limitInsights,
       allowed: q.allowed,
     });
   } catch (err) {

@@ -15,6 +15,7 @@ import { checkQuota, incrementUsage } from './_lib/supabase';
 export const config = { runtime: 'edge' };
 
 const OPENAI_URL = 'https://api.openai.com/v1/audio/transcriptions';
+const WHISPER_MAX_BYTES = 25 * 1024 * 1024; // Whisper rejects > 25 MB.
 
 export default async function handler(req: Request): Promise<Response> {
   try {
@@ -34,6 +35,10 @@ export default async function handler(req: Request): Promise<Response> {
     const form = await req.formData();
     const file = form.get('file');
     if (!(file instanceof Blob)) throw new HttpError(400, 'Missing audio file');
+    if (file.size === 0) throw new HttpError(400, 'Empty audio file');
+    if (file.size > WHISPER_MAX_BYTES) {
+      throw new HttpError(413, `Audio chunk too large (${file.size} B). Max ${WHISPER_MAX_BYTES} B.`);
+    }
 
     const language = typeof form.get('language') === 'string' ? (form.get('language') as string) : '';
     const prompt = typeof form.get('prompt') === 'string' ? (form.get('prompt') as string) : '';
@@ -65,10 +70,17 @@ export default async function handler(req: Request): Promise<Response> {
       segments?: Array<{ start: number; end: number; text: string }>;
     };
 
-    // Meter usage (fire-and-forget so the response time stays flat).
+    // Meter usage. We await the RPC so the counter is never lost on Edge —
+    // fire-and-forget here can be killed before the promise resolves, letting
+    // users slip past the free-tier cap by spamming parallel chunks.
     const duration = Math.round(data.duration ?? 0);
     if (duration > 0) {
-      void incrementUsage(userId, { transcribeSec: duration });
+      try {
+        await incrementUsage(userId, { transcribeSec: duration });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[transcribe] meter failed', (err as Error).message);
+      }
     }
 
     return json(200, {

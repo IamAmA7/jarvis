@@ -29,7 +29,7 @@ export async function incrementUsage(
 ): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   const { transcribeSec = 0, insightsCalls = 0 } = patch;
-  // Upsert with RPC-style delta. We rely on a conflict target = (user, day).
+  if (transcribeSec === 0 && insightsCalls === 0) return;
   const { error } = await admin().rpc('bump_usage', {
     p_user: userId,
     p_day: today,
@@ -37,43 +37,49 @@ export async function incrementUsage(
     p_insights_calls: insightsCalls,
   });
   if (error) {
-    // Fallback: if the RPC isn't installed, do a read-modify-write. Safe
-    // enough for MVP; the RPC is the preferred path.
-    const { data } = await admin()
-      .from('usage')
-      .select('transcribe_sec, insights_calls')
-      .eq('clerk_user_id', userId)
-      .eq('day', today)
-      .maybeSingle();
-    const base = data ?? { transcribe_sec: 0, insights_calls: 0 };
-    await admin()
-      .from('usage')
-      .upsert(
-        {
-          clerk_user_id: userId,
-          day: today,
-          transcribe_sec: base.transcribe_sec + transcribeSec,
-          insights_calls: base.insights_calls + insightsCalls,
-        },
-        { onConflict: 'clerk_user_id,day' },
-      );
+    // eslint-disable-next-line no-console
+    console.error('[usage] bump_usage RPC failed', error.message);
+    throw new Error(`bump_usage failed: ${error.message}`);
   }
 }
 
-const FREE_TIER_DAILY_SEC = 60 * 60; // 60 minutes / day on the free plan.
+// Free-tier limits. Transcription cap is seconds-of-audio per UTC day; insights
+// cap is number of Claude calls per UTC day. Both are enforced server-side.
+export const FREE_DAILY_SEC = 60 * 60; // 60 minutes of transcription.
+export const FREE_DAILY_INSIGHTS = 100; // 100 insight refreshes.
 
-export async function checkQuota(userId: string): Promise<{ allowed: boolean; usedSec: number; limitSec: number | null; plan: 'free' | 'pro' }> {
+export interface Quota {
+  allowed: boolean;
+  usedSec: number;
+  usedInsights: number;
+  limitSec: number | null;
+  limitInsights: number | null;
+  plan: 'free' | 'pro';
+}
+
+export async function checkQuota(userId: string): Promise<Quota> {
   const [{ data: sub }, { data: usage }] = await Promise.all([
     admin().from('subscriptions').select('plan, status').eq('clerk_user_id', userId).maybeSingle(),
     admin()
       .from('usage')
-      .select('transcribe_sec')
+      .select('transcribe_sec, insights_calls')
       .eq('clerk_user_id', userId)
       .eq('day', new Date().toISOString().slice(0, 10))
       .maybeSingle(),
   ]);
   const plan = (sub?.plan === 'pro' && sub?.status === 'active' ? 'pro' : 'free') as 'free' | 'pro';
   const usedSec = usage?.transcribe_sec ?? 0;
-  if (plan === 'pro') return { allowed: true, usedSec, limitSec: null, plan };
-  return { allowed: usedSec < FREE_TIER_DAILY_SEC, usedSec, limitSec: FREE_TIER_DAILY_SEC, plan };
+  const usedInsights = usage?.insights_calls ?? 0;
+  if (plan === 'pro') {
+    return { allowed: true, usedSec, usedInsights, limitSec: null, limitInsights: null, plan };
+  }
+  const allowed = usedSec < FREE_DAILY_SEC && usedInsights < FREE_DAILY_INSIGHTS;
+  return {
+    allowed,
+    usedSec,
+    usedInsights,
+    limitSec: FREE_DAILY_SEC,
+    limitInsights: FREE_DAILY_INSIGHTS,
+    plan,
+  };
 }

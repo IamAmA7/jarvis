@@ -9,7 +9,7 @@
  * short allow-list to stop budget leaks.
  */
 import { errorResponse, HttpError, json, requireUser } from './_lib/auth';
-import { incrementUsage } from './_lib/supabase';
+import { checkQuota, incrementUsage } from './_lib/supabase';
 
 export const config = { runtime: 'edge' };
 
@@ -47,6 +47,19 @@ export default async function handler(req: Request): Promise<Response> {
   try {
     if (req.method !== 'POST') throw new HttpError(405, 'POST only');
     const { userId } = await requireUser(req);
+
+    // Gate on the shared quota (free plan: 100 insight calls/day).
+    const quota = await checkQuota(userId);
+    if (!quota.allowed) {
+      return json(402, {
+        error: 'Daily free-tier quota exceeded. Upgrade to Pro to continue.',
+        usedSec: quota.usedSec,
+        limitSec: quota.limitSec,
+        usedInsights: quota.usedInsights,
+        limitInsights: quota.limitInsights,
+        plan: quota.plan,
+      });
+    }
 
     const body = (await req.json()) as {
       transcript?: string;
@@ -111,7 +124,12 @@ export default async function handler(req: Request): Promise<Response> {
     const parsed = safeParseJson(text);
     if (!parsed) throw new HttpError(502, 'Claude returned invalid JSON');
 
-    void incrementUsage(userId, { insightsCalls: 1 });
+    try {
+      await incrementUsage(userId, { insightsCalls: 1 });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[insights] meter failed', (err as Error).message);
+    }
 
     return json(200, normalise(parsed, sessionId));
   } catch (err) {

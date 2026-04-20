@@ -35,9 +35,11 @@ Browser-visible (start with `VITE_`):
 
 Server-only (no `VITE_` prefix):
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`,
-`DEEPGRAM_PROJECT_ID`, `CLERK_SECRET_KEY`, `CLERK_JWT_ISSUER` (optional),
-`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY`,
-`STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_PRO`, `APP_URL`.
+`DEEPGRAM_PROJECT_ID`, `CLERK_SECRET_KEY`, **`CLERK_JWT_ISSUER` (REQUIRED —
+find in Clerk Dashboard → API Keys → "Issuer URL"; without it /api/* returns
+500 for every request)**, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_PRO`,
+`APP_URL`.
 
 ## 3. Promote to production
 
@@ -67,7 +69,8 @@ git push origin main         # Vercel builds + deploys automatically
 
 ## Operational knobs
 
-- **Free tier quota.** Edit `api/_lib/supabase.ts` → `FREE_DAILY_SEC`.
+- **Free tier transcription cap.** Edit `api/_lib/supabase.ts` → `FREE_DAILY_SEC`.
+- **Free tier insights cap.** Edit `api/_lib/supabase.ts` → `FREE_DAILY_INSIGHTS`.
 - **Allowed Claude models.** Edit `api/insights.ts` → `ALLOWED_MODELS`.
 - **Pricing / plan copy.** Edit `src/components/BillingView.tsx`.
 

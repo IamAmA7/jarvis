@@ -23,6 +23,8 @@ export default async function handler(req: Request): Promise<Response> {
         error: 'Daily free-tier quota exceeded',
         usedSec: quota.usedSec,
         limitSec: quota.limitSec,
+        usedInsights: quota.usedInsights,
+        limitInsights: quota.limitInsights,
         plan: quota.plan,
       });
     }

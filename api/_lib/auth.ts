@@ -6,10 +6,12 @@
  * returns the Clerk user id (the `sub` claim). On failure it throws a
  * `HttpError` that our handlers translate into 401 responses.
  *
- * We verify tokens with `jose` against Clerk's public JWKS. The JWKS URL is
- * derived from the issuer, which is embedded in the token itself — so we
- * don't need an extra env var for it. For belt-and-suspenders we also accept
- * CLERK_JWT_ISSUER to pin the expected issuer.
+ * We verify tokens with `jose` against Clerk's public JWKS. SECURITY: the
+ * issuer MUST be pinned via CLERK_JWT_ISSUER. If we trusted the `iss` claim
+ * from the token itself, an attacker could point us at their own Clerk-like
+ * instance whose JWKS they control, and sign arbitrary `sub` values for any
+ * user id — trivially forging authentication. So if CLERK_JWT_ISSUER is
+ * missing we refuse all requests with a 500.
  */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 
@@ -54,8 +56,14 @@ export async function requireUser(req: Request): Promise<AuthedUser> {
 }
 
 async function verifyClerkToken(token: string): Promise<JWTPayload> {
-  // Peek the issuer from the token header/payload so we can fetch the right
-  // JWKS. (Clerk tokens are unencrypted JWTs.)
+  const expected = process.env.CLERK_JWT_ISSUER;
+  if (!expected) {
+    // Hard-fail — trusting the token's own `iss` claim is a forgery vector.
+    throw new HttpError(500, 'CLERK_JWT_ISSUER not configured');
+  }
+
+  // Peek the issuer from the payload and compare against the pin BEFORE we
+  // fetch JWKS. (Clerk tokens are unencrypted JWTs.)
   const parts = token.split('.');
   if (parts.length !== 3) throw new HttpError(401, 'Malformed JWT');
   let payloadRaw: Record<string, unknown>;
@@ -66,15 +74,13 @@ async function verifyClerkToken(token: string): Promise<JWTPayload> {
   }
   const iss = typeof payloadRaw.iss === 'string' ? payloadRaw.iss : null;
   if (!iss) throw new HttpError(401, 'Token missing issuer');
-
-  const expected = process.env.CLERK_JWT_ISSUER;
-  if (expected && expected !== iss) {
+  if (iss !== expected) {
     throw new HttpError(401, `Issuer mismatch: ${iss}`);
   }
 
   try {
-    const { payload } = await jwtVerify(token, jwksFor(iss), {
-      issuer: iss,
+    const { payload } = await jwtVerify(token, jwksFor(expected), {
+      issuer: expected,
       clockTolerance: 5,
     });
     return payload;

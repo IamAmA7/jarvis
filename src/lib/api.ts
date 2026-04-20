@@ -86,6 +86,8 @@ export interface UsageSnapshot {
   plan: 'free' | 'pro';
   usedSec: number;
   limitSec: number | null;
+  usedInsights: number;
+  limitInsights: number | null;
   allowed: boolean;
 }
 

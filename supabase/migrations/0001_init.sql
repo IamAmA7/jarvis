@@ -160,4 +160,31 @@ drop trigger if exists usage_touch on public.usage;
 create trigger usage_touch before update on public.usage
   for each row execute function public.touch_updated_at();
 
+-- ————— bump_usage RPC —————
+-- Atomic per-user/per-day increment used by /api/transcribe and /api/insights.
+-- Without this, the server falls back to read-modify-write which races on
+-- concurrent requests (two chunks landing in the same Edge invocation window
+-- can lose increments and let users slip past the free-tier cap).
+create or replace function public.bump_usage(
+  p_user text,
+  p_day date,
+  p_transcribe_sec integer,
+  p_insights_calls integer
+) returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.usage (clerk_user_id, day, transcribe_sec, insights_calls)
+  values (p_user, p_day, coalesce(p_transcribe_sec, 0), coalesce(p_insights_calls, 0))
+  on conflict (clerk_user_id, day) do update
+    set transcribe_sec = public.usage.transcribe_sec + excluded.transcribe_sec,
+        insights_calls = public.usage.insights_calls + excluded.insights_calls,
+        updated_at     = now();
+$$;
+
+-- Only the service-role (server) should invoke this; RLS doesn't gate RPC.
+revoke all on function public.bump_usage(text, date, integer, integer) from public;
+grant execute on function public.bump_usage(text, date, integer, integer) to service_role;
+
 commit;
