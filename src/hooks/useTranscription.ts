@@ -1,12 +1,13 @@
 /**
  * useTranscription
  *
- * Feeds audio chunks into Whisper directly from the browser using the user's
- * own API key from settings. Concurrency is bounded so slow responses don't
+ * Feeds audio chunks into Whisper via the server-side `/api/transcribe`
+ * proxy. The caller supplies a `getToken` (from Clerk) which we use to
+ * authenticate each request. Concurrency is bounded so slow responses don't
  * reorder transcripts on the page.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { transcribeChunk } from '../lib/api';
+import { transcribeChunk, type GetToken } from '../lib/api';
 import { makeId } from '../lib/ids';
 import type { Settings } from '../lib/settings';
 import type { TranscriptChunk } from '../types';
@@ -14,6 +15,7 @@ import type { AudioChunk } from './useAudioRecorder';
 
 export interface UseTranscriptionOptions {
   settings: Settings;
+  getToken: GetToken;
 }
 
 export interface UseTranscriptionResult {
@@ -26,7 +28,7 @@ export interface UseTranscriptionResult {
 }
 
 export function useTranscription(opts: UseTranscriptionOptions): UseTranscriptionResult {
-  const { settings } = opts;
+  const { settings, getToken } = opts;
   const [chunks, setChunks] = useState<TranscriptChunk[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
@@ -34,9 +36,13 @@ export function useTranscription(opts: UseTranscriptionOptions): UseTranscriptio
   const inflightRef = useRef<Map<string, AbortController>>(new Map());
   const chunksRef = useRef<TranscriptChunk[]>([]);
   const settingsRef = useRef(settings);
+  const tokenRef = useRef(getToken);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+  useEffect(() => {
+    tokenRef.current = getToken;
+  }, [getToken]);
 
   const setChunksSynced = useCallback(
     (updater: (prev: TranscriptChunk[]) => TranscriptChunk[]) => {
@@ -73,8 +79,11 @@ export function useTranscription(opts: UseTranscriptionOptions): UseTranscriptio
         .map((c) => c.text)
         .join(' ');
       const prompt = priorText.slice(-600) || undefined;
+      const language = settingsRef.current.language && settingsRef.current.language !== 'auto'
+        ? settingsRef.current.language
+        : undefined;
 
-      transcribeChunk(audio.blob, settingsRef.current, { prompt, signal: ac.signal })
+      transcribeChunk(audio.blob, tokenRef.current, { prompt, language, signal: ac.signal })
         .then((result) => {
           setChunksSynced((prev) =>
             prev.map((c) =>

@@ -1,29 +1,42 @@
 {
   "name": "jarvis",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "Jarvis — AI voice intelligence. Single-file browser platform: Whisper transcription + Claude insights, user brings their own API keys.",
+  "description": "Jarvis — AI voice intelligence. Whisper/Deepgram transcription + Claude insights, Clerk-authenticated, server-side API keys, WebHID push-to-talk.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "lint": "echo 'lint skipped — add eslint later' && exit 0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.30.1",
+    "@clerk/clerk-react": "^5.15.0",
+    "@sentry/react": "^8.40.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "jose": "^5.9.6",
+    "posthog-js": "^1.175.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "stripe": "^17.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
+    "@vitest/coverage-v8": "^2.1.4",
     "autoprefixer": "^10.4.20",
+    "jsdom": "^25.0.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
-    "vite-plugin-singlefile": "^2.3.3"
+    "vitest": "^2.1.4"
   }
 }

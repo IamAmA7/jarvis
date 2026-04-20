@@ -54,4 +54,4 @@ export interface Session {
 
 export type RecorderState = 'idle' | 'recording' | 'paused' | 'stopping';
 
-export type AppView = 'record' | 'sessions' | 'settings';
+export type AppView = 'record' | 'sessions' | 'settings' | 'billing';

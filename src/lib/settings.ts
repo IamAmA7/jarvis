@@ -1,12 +1,13 @@
 /**
- * User settings — API keys, model choice, language preferences.
+ * User settings — model choice, language, UX preferences.
  *
- * Everything is stored in localStorage. No backend is involved. Keys never
- * leave the user's browser (except of course in the outbound HTTPS calls to
- * OpenAI and Anthropic).
+ * API keys are no longer stored client-side: they live on the server as
+ * Vercel env vars and are proxied through `/api/*`. What remains is purely
+ * user-facing preference: which model to use for insights, which UI
+ * language to assume for transcription, whether to cache sessions locally.
  */
 
-const KEY = 'jarvis.settings.v1';
+const KEY = 'jarvis.settings.v2';
 
 export type ClaudeModel =
   | 'claude-sonnet-4-6'
@@ -32,27 +33,31 @@ export const CLAUDE_MODELS: { value: ClaudeModel; label: string; hint: string }[
 ];
 
 export const LANGUAGE_OPTIONS = [
-  { value: '', label: 'Авто (определить сам)' },
+  { value: 'auto', label: 'Авто (определить сам)' },
   { value: 'ru', label: 'Русский' },
   { value: 'uk', label: 'Українська' },
   { value: 'en', label: 'English' },
 ] as const;
 
+export type TranscriptionEngine = 'whisper' | 'deepgram';
+
 export interface Settings {
-  openaiApiKey: string;
-  anthropicApiKey: string;
   model: ClaudeModel;
-  /** ISO-639-1. Пустая строка = автоопределение Whisper. */
+  /** ISO-639-1 или 'auto'. */
   language: string;
-  /** Сохранять сессии в localStorage (иначе только в памяти). */
+  /** Streaming via Deepgram vs batched Whisper chunks. */
+  transcriptionEngine: TranscriptionEngine;
+  /** Hold-to-talk via connected WebHID device. */
+  pushToTalkEnabled: boolean;
+  /** Cache session metadata locally — cloud is always the source of truth. */
   persistSessions: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  openaiApiKey: '',
-  anthropicApiKey: '',
   model: 'claude-sonnet-4-6',
-  language: '',
+  language: 'auto',
+  transcriptionEngine: 'whisper',
+  pushToTalkEnabled: false,
   persistSessions: true,
 };
 
@@ -65,8 +70,9 @@ export function loadSettings(): Settings {
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
-      // Narrow model to a known value in case an old build saved something stale.
       model: isKnownModel(parsed.model) ? parsed.model : DEFAULT_SETTINGS.model,
+      transcriptionEngine:
+        parsed.transcriptionEngine === 'deepgram' ? 'deepgram' : 'whisper',
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -78,34 +84,13 @@ export function saveSettings(next: Settings): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(next));
   } catch {
-    // quota or private mode — best effort
+    /* quota or private mode */
   }
 }
 
 export function clearSettings(): void {
   if (typeof localStorage === 'undefined') return;
   localStorage.removeItem(KEY);
-}
-
-export function isConfigured(s: Settings): boolean {
-  return s.openaiApiKey.trim().length > 0 && s.anthropicApiKey.trim().length > 0;
-}
-
-/** Safe heuristic check for obviously-malformed keys. */
-export function validateKeyShape(
-  provider: 'openai' | 'anthropic',
-  key: string,
-): string | null {
-  const k = key.trim();
-  if (!k) return 'Ключ не указан.';
-  if (provider === 'openai' && !k.startsWith('sk-')) {
-    return 'OpenAI ключ должен начинаться с "sk-".';
-  }
-  if (provider === 'anthropic' && !k.startsWith('sk-ant-')) {
-    return 'Anthropic ключ должен начинаться с "sk-ant-".';
-  }
-  if (k.length < 20) return 'Ключ слишком короткий.';
-  return null;
 }
 
 function isKnownModel(m: unknown): m is ClaudeModel {

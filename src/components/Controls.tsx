@@ -2,6 +2,7 @@ import type { RecorderState } from '../types';
 
 interface ControlsProps {
   state: RecorderState;
+  disabled?: boolean;
   onStart: () => void;
   onPause: () => void;
   onResume: () => void;
@@ -12,6 +13,7 @@ interface ControlsProps {
 
 export function Controls({
   state,
+  disabled,
   onStart,
   onPause,
   onResume,
@@ -29,7 +31,8 @@ export function Controls({
         <button
           type="button"
           onClick={onStart}
-          className="flex items-center gap-2 rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 focus:outline-none focus:ring-2 focus:ring-accent-500/70"
+          disabled={disabled}
+          className="flex items-center gap-2 rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 focus:outline-none focus:ring-2 focus:ring-accent-500/70 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <MicIcon className="h-4 w-4" />
           Record

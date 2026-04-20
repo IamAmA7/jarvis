@@ -6,12 +6,13 @@
  * serialized (only one in-flight at a time).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { requestInsights } from '../lib/api';
+import { requestInsights, type GetToken } from '../lib/api';
 import type { Settings } from '../lib/settings';
 import type { Insight, InsightType, TranscriptChunk } from '../types';
 
 export interface UseInsightsOptions {
   settings: Settings;
+  getToken: GetToken;
   sessionId: string;
   context: string;
   insightTypes?: InsightType[];
@@ -32,6 +33,7 @@ export interface UseInsightsResult {
 export function useInsights(opts: UseInsightsOptions): UseInsightsResult {
   const {
     settings,
+    getToken,
     sessionId,
     context,
     insightTypes,
@@ -48,9 +50,13 @@ export function useInsights(opts: UseInsightsOptions): UseInsightsResult {
   const debounceTimerRef = useRef<number | null>(null);
   const inflightRef = useRef<AbortController | null>(null);
   const settingsRef = useRef(settings);
+  const tokenRef = useRef(getToken);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+  useEffect(() => {
+    tokenRef.current = getToken;
+  }, [getToken]);
 
   const run = useCallback(
     async (chunks: TranscriptChunk[]) => {
@@ -74,9 +80,10 @@ export function useInsights(opts: UseInsightsOptions): UseInsightsResult {
             context: context || undefined,
             insightTypes,
             sessionId,
+            model: settingsRef.current.model,
             signal: ac.signal,
           },
-          settingsRef.current,
+          tokenRef.current,
         );
         setInsight(result);
         lastRunAtCharsRef.current = transcript.length;

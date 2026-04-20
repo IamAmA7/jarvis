@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SignedIn, SignedOut, SignIn } from '@clerk/clerk-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { BillingView } from './components/BillingView';
 import { ContextInput } from './components/ContextInput';
 import { Controls } from './components/Controls';
 import { ExportBar } from './components/ExportBar';
@@ -11,52 +13,89 @@ import { TranscriptPanel } from './components/TranscriptPanel';
 import { WaveformVisualizer } from './components/WaveformVisualizer';
 import { useAudioRecorder, type AudioChunk } from './hooks/useAudioRecorder';
 import { useInsights } from './hooks/useInsights';
+import { useSessionSync } from './hooks/useSessionSync';
 import { useTranscription } from './hooks/useTranscription';
+import { useUsage } from './hooks/useUsage';
+import { useWebHID } from './hooks/useWebHID';
+import { useJarvisAuth } from './lib/auth';
 import { makeId } from './lib/ids';
 import {
   DEFAULT_SETTINGS,
-  isConfigured,
   loadSettings,
   saveSettings,
   type Settings,
 } from './lib/settings';
-import { clearSessions, loadSessions, saveSession } from './lib/storage';
+import { clearSessions } from './lib/storage';
+import { identifyUser, track } from './lib/telemetry';
 import type { AppView, Session } from './types';
 
-const VIEWS: AppView[] = ['record', 'sessions', 'settings'];
+const VIEWS: AppView[] = ['record', 'sessions', 'settings', 'billing'];
 
 export default function App() {
+  return (
+    <>
+      <SignedIn>
+        <SignedInApp />
+      </SignedIn>
+      <SignedOut>
+        <SignInGate />
+      </SignedOut>
+    </>
+  );
+}
+
+function SignInGate() {
+  return (
+    <div className="flex h-full items-center justify-center bg-ink-950 p-6">
+      <div className="w-full max-w-md">
+        <div className="mb-6 text-center">
+          <h1 className="text-3xl font-semibold text-ink-100">Jarvis</h1>
+          <p className="mt-2 text-sm text-ink-400">
+            AI-микрофон: транскрипция + структурные инсайты в реальном времени.
+          </p>
+        </div>
+        <SignIn routing="hash" />
+      </div>
+    </div>
+  );
+}
+
+function SignedInApp() {
+  const { userId, email, name, getToken, signOut } = useJarvisAuth();
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [view, setView] = useState<AppView>(() => viewFromHash());
   const [sessionId, setSessionId] = useState(() => makeId('s_'));
   const [sessionStart, setSessionStart] = useState(() => Date.now());
   const [context, setContext] = useState('');
-  const [storedSessions, setStoredSessions] = useState<Session[]>(() => loadSessions());
+  const usage = useUsage({ getToken, enabled: Boolean(userId) });
 
-  // Route changes via URL hash so back/forward works.
+  useEffect(() => {
+    identifyUser(userId, { email: email ?? undefined, name: name ?? undefined });
+  }, [userId, email, name]);
+
   useEffect(() => {
     const onHash = () => setView(viewFromHash());
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
   const changeView = useCallback((next: AppView) => {
     if (location.hash !== `#${next}`) location.hash = next;
     setView(next);
+    track('view:change', { view: next });
   }, []);
 
-  // Persist settings on change.
   const persistSettings = useCallback((next: Settings) => {
     setSettings(next);
     saveSettings(next);
   }, []);
 
-  const configured = isConfigured(settings);
-
   // ————— Recording stack —————
 
-  const transcription = useTranscription({ settings });
+  const transcription = useTranscription({ settings, getToken });
   const insights = useInsights({
     settings,
+    getToken,
     sessionId,
     context,
   });
@@ -74,6 +113,18 @@ export default function App() {
 
   const recorder = useAudioRecorder({ onChunk: handleChunk });
 
+  // Optional push-to-talk via connected HID device (foot pedal, jog dial…)
+  const hid = useWebHID({
+    enabled: settings.pushToTalkEnabled,
+    onButtonPress: () => {
+      if (recorder.state === 'idle' || recorder.state === 'paused') {
+        void recorder.start();
+      } else {
+        recorder.stop();
+      }
+    },
+  });
+
   const session: Session = useMemo(
     () => ({
       id: sessionId,
@@ -85,27 +136,8 @@ export default function App() {
     [sessionId, sessionStart, context, transcription.chunks, insights.insight],
   );
 
-  // Debounced persistence of the live session.
-  const saveTimerRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (saveTimerRef.current != null) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = window.setTimeout(() => {
-      if (session.chunks.length === 0 && !session.insight) return;
-      saveSession(session, settings.persistSessions);
-      setStoredSessions(loadSessions());
-    }, 1200);
-    return () => {
-      if (saveTimerRef.current != null) clearTimeout(saveTimerRef.current);
-    };
-  }, [session, settings.persistSessions]);
-
-  // Wipe cached sessions whenever the user opts out.
-  useEffect(() => {
-    if (!settings.persistSessions) {
-      clearSessions();
-      setStoredSessions([]);
-    }
-  }, [settings.persistSessions]);
+  // Push the live session to Supabase as it grows.
+  useSessionSync({ getToken, session, enabled: userId !== null });
 
   const handleClear = useCallback(() => {
     recorder.stop();
@@ -118,12 +150,12 @@ export default function App() {
   const resetEverything = useCallback(() => {
     handleClear();
     clearSessions();
-    setStoredSessions([]);
     persistSettings(DEFAULT_SETTINGS);
   }, [handleClear, persistSettings]);
 
   const hasAnyWork = session.chunks.length > 0 || session.insight !== null;
-  const lastError = recorder.error ?? transcription.lastError ?? insights.lastError;
+  const lastError =
+    recorder.error ?? transcription.lastError ?? insights.lastError ?? null;
 
   return (
     <div className="flex h-full flex-col">
@@ -131,14 +163,19 @@ export default function App() {
         view={view}
         onChangeView={changeView}
         recorderState={recorder.state}
-        configured={configured}
         model={settings.model}
+        userName={name}
+        userEmail={email}
+        usage={usage.snapshot}
+        onSignOut={() => {
+          track('auth:sign_out');
+          void signOut();
+        }}
       />
 
       <main className="flex min-h-0 flex-1 flex-col gap-4 p-4 md:p-6">
         {view === 'record' && (
           <RecordView
-            settings={settings}
             recorder={recorder}
             transcription={transcription}
             insights={insights}
@@ -146,9 +183,12 @@ export default function App() {
             context={context}
             onContextChange={setContext}
             onOpenSettings={() => changeView('settings')}
+            onOpenBilling={() => changeView('billing')}
             onClear={handleClear}
             hasAnyWork={hasAnyWork}
             lastError={lastError}
+            quotaExceeded={usage.snapshot?.allowed === false}
+            hidDeviceName={hid.deviceName}
           />
         )}
 
@@ -157,25 +197,25 @@ export default function App() {
             settings={settings}
             onChange={persistSettings}
             onResetEverything={resetEverything}
+            hid={hid}
           />
         )}
 
         {view === 'sessions' && (
-          <SessionsView
-            sessions={storedSessions}
-            onChanged={() => setStoredSessions(loadSessions())}
-            onGoToRecord={() => changeView('record')}
-          />
+          <SessionsView getToken={getToken} onGoToRecord={() => changeView('record')} />
+        )}
+
+        {view === 'billing' && (
+          <BillingView getToken={getToken} usage={usage.snapshot} onRefresh={usage.refresh} />
         )}
       </main>
     </div>
   );
 }
 
-// ————— Record view (pulled out so App stays scannable) —————
+// ————— Record view —————
 
 interface RecordViewProps {
-  settings: Settings;
   recorder: ReturnType<typeof useAudioRecorder>;
   transcription: ReturnType<typeof useTranscription>;
   insights: ReturnType<typeof useInsights>;
@@ -183,13 +223,15 @@ interface RecordViewProps {
   context: string;
   onContextChange: (v: string) => void;
   onOpenSettings: () => void;
+  onOpenBilling: () => void;
   onClear: () => void;
   hasAnyWork: boolean;
   lastError: string | null;
+  quotaExceeded: boolean;
+  hidDeviceName: string | null;
 }
 
 function RecordView({
-  settings,
   recorder,
   transcription,
   insights,
@@ -197,17 +239,21 @@ function RecordView({
   context,
   onContextChange,
   onOpenSettings,
+  onOpenBilling,
   onClear,
   hasAnyWork,
   lastError,
+  quotaExceeded,
+  hidDeviceName,
 }: RecordViewProps) {
   return (
     <>
       <StatusBar
-        missingOpenAI={!settings.openaiApiKey}
-        missingAnthropic={!settings.anthropicApiKey}
         lastError={lastError}
+        quotaExceeded={quotaExceeded}
+        hidDeviceName={hidDeviceName}
         onOpenSettings={onOpenSettings}
+        onOpenBilling={onOpenBilling}
       />
 
       <div className="flex flex-col gap-3 rounded-lg border border-ink-800 bg-ink-900/40 p-4 md:flex-row md:items-end md:justify-between">
@@ -223,6 +269,7 @@ function RecordView({
             <WaveformVisualizer level={recorder.level} state={recorder.state} />
             <Controls
               state={recorder.state}
+              disabled={quotaExceeded}
               onStart={() => {
                 void recorder.start();
               }}

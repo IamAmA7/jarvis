@@ -1,25 +1,19 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { viteSingleFile } from 'vite-plugin-singlefile';
 
-// Produces a SINGLE self-contained index.html: React, CSS, and all JS inlined.
-// Drop that file onto any static host (Netlify Drop, Cloudflare Pages, etc.)
-// and it just works.
+// Standard multi-file Vite build. We ship a proper `dist/` with hashed asset
+// filenames so Vercel can serve them with a year-long Cache-Control header.
+// The single-file bundle mode was only useful back when Jarvis ran entirely
+// in the browser with user-supplied keys — now there's a real backend, so
+// splitting is a net win (cache hit rate, parallel fetch, smaller initial
+// payload thanks to code-splitting of rare views).
 export default defineConfig({
-  plugins: [react(), viteSingleFile()],
+  plugins: [react()],
   server: {
     port: 5173,
   },
   build: {
     outDir: 'dist',
-    // The single-file plugin sets these, but being explicit helps.
-    assetsInlineLimit: 100_000_000,
-    cssCodeSplit: false,
-    sourcemap: false,
-    rollupOptions: {
-      output: {
-        inlineDynamicImports: true,
-      },
-    },
+    sourcemap: true,
   },
 });

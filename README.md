@@ -1,95 +1,107 @@
-# Jarvis — AI voice intelligence (browser service)
+# Jarvis — AI voice intelligence
 
 A microphone that listens, transcribes in real time, and produces structured
-insights with Claude — **all in the browser**. No backend, no build-time
-secrets, no server to deploy. Each user brings their own OpenAI and Anthropic
-API keys, pasted into the Settings page and stored in their browser only.
+insights with Claude. Multi-tenant SaaS with per-user auth, cloud history,
+metered free tier, and a Pro subscription — all wired up to production
+providers.
 
 ```
-                 ┌──────────────────────────────┐
-                 │   OpenAI Whisper (browser    │
-   🎤 mic  ────▶ │      → transcription)        │
-                 └──────────────┬───────────────┘
-                                │ text chunks
-                                ▼
-                 ┌──────────────────────────────┐
-                 │   Anthropic Claude (browser  │
-                 │      → structured insight)   │
-                 └──────────────────────────────┘
+                ┌────────────┐      ┌──────────────────────────┐
+   🎤  mic  ───▶│  browser   │─────▶│  /api/transcribe (Edge)  │──▶ Whisper
+      WebHID    │  (React)   │      │  /api/insights (Edge)    │──▶ Claude
+      push to   │            │      │  /api/sessions (Edge)    │◀─▶ Supabase
+      talk      └─────┬──────┘      │  /api/stripe/* (Node)    │◀─▶ Stripe
+                      │             │  /api/deepgram/token     │──▶ Deepgram
+                      │             └──────────────────────────┘
+                      ▼
+                  Deepgram WS (streaming, Pro only)
 ```
 
-## Try it locally in 30 seconds
+All secrets live as Vercel environment variables. The browser never sees
+Whisper/Claude/Deepgram/Stripe/Supabase service-role keys — every call is
+authenticated with a Clerk JWT and proxied server-side.
+
+## What's included
+
+- **Auth.** Clerk. JWTs verified server-side via JWKS (`jose`).
+- **Storage.** Supabase Postgres with Row-Level Security keyed on
+  `clerk_user_id`. Schema in `supabase/migrations/0001_init.sql`.
+- **Transcription.** OpenAI Whisper (batched) by default; Deepgram Nova-2
+  over a WebSocket with 60-second scoped keys when the user flips the switch
+  (Pro only).
+- **Insights.** Claude Sonnet 4.6 with a strict JSON system prompt, validated
+  and normalized server-side.
+- **Billing.** Stripe Checkout + Billing Portal + webhooks (HMAC-verified).
+  Free tier = 60 min of transcription per UTC day; Pro = unlimited.
+- **Hardware.** WebHID for generic input devices (foot pedals, jog dials,
+  programmable buttons) — connect once, toggle push-to-talk in Settings.
+- **Telemetry.** Sentry (errors) + PostHog (product analytics). Both optional
+  — omit the env vars and the init calls no-op.
+- **Tests.** Vitest for the pure libs, Playwright for a smoke suite against
+  the production build.
+
+## Quick start (local)
 
 ```bash
+cp .env.example .env.local
+# …fill in the values (see Env reference below)
+
 npm install
 npm run dev
 # open http://localhost:5173
 ```
 
-1. Open **Settings** and paste your `sk-…` (OpenAI) and `sk-ant-…`
-   (Anthropic) keys. Press **Проверить** on each to confirm they work.
-2. Go back to **Запись**. Click **Record** and start talking.
-3. Transcript streams into the left column; Claude's insights (summary,
-   action items, topics, open questions, sentiment, energy) render on the
-   right.
-
-## Deploy it as a public service
-
-Because there's no backend, you can host the built `dist/` folder on any
-static host.
-
-### Vercel
+Run the tests:
 
 ```bash
-npx vercel        # first run — pick settings
-npx vercel --prod # publish
+npm run typecheck
+npm run test
+npm run test:e2e       # requires `npx playwright install chromium` once
 ```
 
-`vercel.json` is already present with the SPA rewrite and asset caching rules.
+## Env reference
 
-### Netlify
+See `.env.example` for the full list. The short version:
 
-```bash
-npx netlify deploy --build --prod
-```
+| Variable                         | Where           | Required |
+| -------------------------------- | --------------- | -------- |
+| `VITE_CLERK_PUBLISHABLE_KEY`     | browser         | yes      |
+| `VITE_SUPABASE_URL`              | browser         | yes      |
+| `VITE_SUPABASE_ANON_KEY`         | browser         | yes      |
+| `VITE_POSTHOG_KEY`               | browser         | no       |
+| `VITE_POSTHOG_HOST`              | browser         | no       |
+| `VITE_SENTRY_DSN`                | browser         | no       |
+| `OPENAI_API_KEY`                 | server          | yes      |
+| `ANTHROPIC_API_KEY`              | server          | yes      |
+| `DEEPGRAM_API_KEY`               | server          | for Pro  |
+| `DEEPGRAM_PROJECT_ID`            | server          | for Pro  |
+| `CLERK_SECRET_KEY`               | server          | yes      |
+| `CLERK_JWT_ISSUER`               | server          | no (pin) |
+| `SUPABASE_URL`                   | server          | yes      |
+| `SUPABASE_SERVICE_ROLE_KEY`      | server          | yes      |
+| `STRIPE_SECRET_KEY`              | server          | yes      |
+| `STRIPE_WEBHOOK_SECRET`          | server          | yes      |
+| `STRIPE_PRICE_ID_PRO`            | server          | yes      |
+| `APP_URL`                        | server          | yes      |
 
-`netlify.toml` already configures the build command, publish directory, and
-SPA fallback.
+## Deploy
 
-### GitHub Pages
+One-time:
 
-Push to `main` and the included workflow
-(`.github/workflows/deploy-pages.yml`) runs `npm run build` and publishes
-`dist/` to Pages. Enable Pages with source = "GitHub Actions" in the repo
-settings.
+1. Import the repo into Vercel.
+2. Run the migration in `supabase/migrations/0001_init.sql` against your
+   Supabase project (SQL editor or `supabase db push`).
+3. Create the Pro price in Stripe and grab the `price_xxx` id.
+4. In the Stripe dashboard, add a webhook endpoint →
+   `https://<your-app>.vercel.app/api/stripe/webhook` → copy the signing
+   secret to `STRIPE_WEBHOOK_SECRET`.
+5. In the Clerk dashboard, add your production domain to the allowed origins.
+6. Paste every key from `.env.example` into Vercel → Settings → Environment
+   Variables (Production + Preview).
+7. Push to `main`. Vercel builds and deploys.
 
-### Any static host
-
-```bash
-npm run build
-# upload dist/ to S3 / Cloudflare Pages / R2 / a plain Nginx box — anywhere
-```
-
-Make sure your host rewrites unknown paths to `/index.html` (SPA fallback).
-
-## How it works
-
-1. **Capture.** `useAudioRecorder` asks for the mic, wires an `AnalyserNode`
-   for level metering, and cycles `MediaRecorder` every ~3.5 s so each chunk
-   is an independently-decodable WebM/Opus blob.
-2. **VAD.** An energy-based detector (`lib/vad.ts`) tracks the rolling noise
-   floor and drops silent chunks before they hit Whisper — saves money,
-   kills hallucinated transcripts.
-3. **Transcription.** Each speech chunk is POSTed straight to
-   `https://api.openai.com/v1/audio/transcriptions` from the browser, with
-   the tail of the prior transcript as a biasing prompt for continuity.
-4. **Insights.** `useInsights` watches the growing transcript, debounces
-   4 s, and fires when the transcript has grown by ≥200 chars. It calls
-   Claude via `@anthropic-ai/sdk` with `dangerouslyAllowBrowser: true` and
-   a strict JSON system prompt. The response is validated and normalized
-   before being rendered.
-5. **Storage + export.** Last 5 sessions live in `localStorage` (toggleable
-   in Settings). Markdown / PDF / clipboard export at any time.
+To add a new Claude model, edit `api/insights.ts` → `ALLOWED_MODELS`.
+To change the free-tier quota, edit `api/_lib/supabase.ts` → `FREE_DAILY_SEC`.
 
 ## Insight JSON schema (output contract)
 
@@ -113,49 +125,40 @@ interface Insight {
 
 ## Security model
 
-- **Keys are user-owned.** Each user pastes their own keys in the Settings
-  page. They're stored in that user's `localStorage` and nowhere else.
-- **No backend means no shared blast radius.** If you spin this up at
-  `jarvis.example.com`, every visitor uses their own keys and pays their own
-  bill. You never see their audio, transcripts, or keys.
-- **Anthropic browser flag.** We set
-  `anthropic-dangerous-direct-browser-access: true` — the visitor is
-  knowingly exposing their key to the page they're using. Same posture as
-  OpenAI's `dangerouslyAllowBrowser`.
-- **Audio is never persisted.** Chunks are sent to Whisper and then garbage
-  collected. Transcripts stay in `localStorage` only if the user enables
-  session history.
-
-If you need a multi-tenant setup with shared billing, add a thin proxy in
-front — see `ARCHITECTURE.md`. The `server/` folder in this repo is a
-reference Express implementation that can be adapted.
+- **No secrets in the browser.** Every third-party API is called from a
+  Vercel Function; the browser only ever holds the Clerk JWT (scoped to the
+  user) and the Supabase anon key (read-only, RLS-protected).
+- **RLS everywhere.** Every table carries a `clerk_user_id` column and a
+  policy that reads `request.jwt.claims.sub`. Even if the anon key leaks,
+  nobody can read somebody else's sessions.
+- **Scoped Deepgram keys.** We mint a fresh Deepgram API key per session
+  with a 60-second TTL, so a compromised frontend can't accumulate billing.
+- **Webhook verification.** Stripe webhooks are verified with
+  `crypto.timingSafeEqual` over the raw body; Clerk JWTs are verified against
+  the project's JWKS.
 
 ## Browser support
 
-Requires a browser with:
-
-- `getUserMedia` (all evergreen browsers)
-- `MediaRecorder` with Opus support (Chrome, Edge, Firefox, Safari 14.1+)
-- `fetch` + `FormData` + `AbortController`
-
-Served over HTTPS is required for the microphone API — `localhost` works too
-during dev.
+- `getUserMedia`, `MediaRecorder` with Opus — all evergreen browsers.
+- `WebHID` for push-to-talk — Chrome, Edge, Opera.
+- HTTPS is required for the microphone; `localhost` works during dev.
 
 ## Commands
 
 ```bash
 npm run dev         # vite dev server on :5173
-npm run build       # production build to dist/
+npm run build       # typecheck + production build to dist/
 npm run preview     # serve dist/ locally
-npm run typecheck   # tsc --noEmit
+npm run typecheck   # tsc --noEmit (app + node + api projects)
+npm run test        # vitest — pure libs
+npm run test:e2e    # playwright smoke
 ```
 
-## What's next
+## Architecture
 
-See `ARCHITECTURE.md` for how the remaining layers from the original spec
-plug into this same core: React Native mobile client, Python Raspberry-Pi
-SDK, Alexa/Google webhooks, and a TS/JS `VoiceIntelligence` SDK for
-third-party integrations.
+See `ARCHITECTURE.md` for the long version: how each layer connects, the
+trade-offs we took, and how to extend this to React Native, Raspberry Pi,
+Alexa skills, or a third-party SDK.
 
 ## License
 
