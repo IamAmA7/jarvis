@@ -1,0 +1,27 @@
+# deps
+node_modules/
+
+# build outputs
+dist/
+dist-*/
+build-*/
+*.tsbuildinfo
+
+# legacy server folder (kept for reference, not deployed)
+server/
+tsconfig.server.json
+
+# vite scratch files
+vite.config.ts.timestamp-*.mjs
+.vite/
+
+# local env
+.env
+.env.local
+.env.*.local
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+*.log
