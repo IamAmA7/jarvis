@@ -18,13 +18,20 @@
     },
     "api/cron/digest.ts": {
       "maxDuration": 60
-    }
+    },
+        "api/cron/gcs-sync.ts": {
+              "maxDuration": 60
+                  }
   },
   "crons": [
     {
       "path": "/api/cron/digest",
       "schedule": "0 19 * * *"
-    }
+    },
+        {
+              "path": "/api/cron/gcs-sync",
+                    "schedule": "*/5 * * * *"
+                        }
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
