@@ -38,7 +38,7 @@ import { transcribe as whisperTranscribe } from './_lib/whisper';
 import { classifyTranscriptWindow } from './_lib/alerts';
 import { formatRedAlert, sendMessage } from './_lib/telegram';
 
-export const config = { runtime: 'nodejs20.x' };
+export const config = { runtime: 'nodejs' };
 
 // How far back the classifier looks when a new chunk arrives. 3 minutes is
 // short enough to catch an escalating situation in time and long enough to
