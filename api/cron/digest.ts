@@ -17,7 +17,7 @@ import { errorResponse, HttpError, json } from '../_lib/auth';
 import { admin } from '../_lib/supabase';
 import { formatDigest, sendMessage } from '../_lib/telegram';
 
-export const config = { runtime: 'nodejs20.x' };
+export const config = { runtime: 'nodejs' };
 
 export default async function handler(req: Request): Promise<Response> {
   try {
