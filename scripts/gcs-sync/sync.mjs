@@ -118,9 +118,9 @@ async function transcribeWhisper(file, filename) {
   const apiKey = envRequired('OPENAI_API_KEY');
   const form = new FormData();
   form.append('file', file, filename);
-  form.append('model', 'whisper-1');
-  form.append('response_format', 'verbose_json');
-  form.append('temperature', '0.4'); form.append('language', 'ru'); /* removed prompt to avoid loop */ // ('prompt', 'Это аудиозапись на русском языке. Возможны паузы, тишина и фоновый шум.'); form.append('language', 'ru');
+  form.append('model', 'gpt-4o-transcribe');
+  form.append('response_format', 'json');
+  form.append('language', 'ru');
   const res = await fetch(OPENAI_TRANSCRIBE_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -265,6 +265,11 @@ async function main() {
       const text = (transcript.text ?? '').trim();
       console.log(`[gcs-sync]    transcribed: ${text.length} chars, lang=${transcript.language ?? '?'}, dur=${transcript.duration ?? '?'}s`);
 
+      const _hWords = text.split(' ').filter(Boolean);
+      const _hUnique = new Set(_hWords.map((w) => w.toLowerCase())).size;
+      if (_hWords.length > 20 && _hUnique / _hWords.length < 0.15) {
+        throw new Error('Hallucination loop: ' + _hUnique + ' unique / ' + _hWords.length + ' total');
+      }
       let insights = null;
       if (text.length > 0) {
         try {
