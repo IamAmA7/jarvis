@@ -32,7 +32,7 @@ export function Controls({
           type="button"
           onClick={onStart}
           disabled={disabled}
-          className="flex items-center gap-2 rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 focus:outline-none focus:ring-2 focus:ring-accent-500/70 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center gap-2 rounded-full bg-accent-500 px-5 py-2 text-sm font-semibold text-black shadow-glow-accent hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-accent-500/70 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <MicIcon className="h-4 w-4" />
           Record
@@ -42,7 +42,7 @@ export function Controls({
         <button
           type="button"
           onClick={onPause}
-          className="flex items-center gap-2 rounded-md border border-ink-700 bg-ink-800/60 px-4 py-2 text-sm font-medium hover:bg-ink-800"
+          className="flex items-center gap-2 rounded-full border border-ink-700 bg-ink-900 px-5 py-2 text-sm font-medium text-ink-100 hover:bg-ink-800"
         >
           <PauseIcon className="h-4 w-4" />
           Pause
@@ -52,7 +52,7 @@ export function Controls({
         <button
           type="button"
           onClick={onResume}
-          className="flex items-center gap-2 rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600"
+          className="flex items-center gap-2 rounded-full bg-accent-500 px-5 py-2 text-sm font-semibold text-black shadow-glow-accent hover:opacity-90"
         >
           <MicIcon className="h-4 w-4" />
           Resume
@@ -62,7 +62,7 @@ export function Controls({
         <button
           type="button"
           onClick={onStop}
-          className="flex items-center gap-2 rounded-md border border-ink-700 bg-ink-800/60 px-4 py-2 text-sm font-medium hover:bg-ink-800"
+          className="flex items-center gap-2 rounded-full border border-ink-700 bg-ink-900 px-5 py-2 text-sm font-medium text-ink-100 hover:bg-ink-800"
         >
           <StopIcon className="h-4 w-4" />
           Stop
@@ -72,7 +72,7 @@ export function Controls({
         type="button"
         onClick={onClear}
         disabled={clearDisabled}
-        className="flex items-center gap-2 rounded-md border border-ink-800 px-4 py-2 text-sm font-medium text-ink-300 hover:bg-ink-800/60 disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex items-center gap-2 rounded-full border border-ink-800 px-5 py-2 text-sm font-medium text-ink-300 hover:bg-ink-800/60 disabled:cursor-not-allowed disabled:opacity-40"
       >
         Clear
       </button>
@@ -89,7 +89,12 @@ function MicIcon({ className }: { className?: string }) {
         strokeWidth="1.8"
         strokeLinecap="round"
       />
-      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path
+        d="M5 11a7 7 0 0 0 14 0M12 18v3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

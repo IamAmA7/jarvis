@@ -49,7 +49,7 @@ export function Header({
               onClick={() => onChangeView(t.id)}
               className={`flex-1 rounded-full px-4 py-2 text-sm font-medium transition-all md:flex-none ${
                 active
-                  ? 'bg-accent-500 text-white shadow-glow-accent'
+                  ? 'bg-accent-500 text-black shadow-glow-accent'
                   : 'text-ink-400 hover:bg-ink-800 hover:text-ink-100'
               }`}
             >
@@ -71,7 +71,7 @@ export function Header({
 
 function Logo() {
   return (
-    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-500 text-white shadow-glow-accent">
+    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-500 text-black shadow-glow-accent">
       <span className="text-base font-extrabold leading-none">J</span>
     </div>
   );
@@ -157,7 +157,7 @@ function UserMenu({
     <div className="group relative">
       <button
         type="button"
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-accent-500 text-xs font-bold text-white shadow-glow-accent hover:opacity-90"
+        className="flex h-9 w-9 items-center justify-center rounded-full bg-accent-500 text-xs font-bold text-black shadow-glow-accent hover:opacity-90"
         aria-haspopup="menu"
         title={truncate(label, 32)}
       >
