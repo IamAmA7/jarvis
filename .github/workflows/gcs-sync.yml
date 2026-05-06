@@ -1,0 +1,35 @@
+name: GCS Audio Sync
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: gcs-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install deps
+        working-directory: scripts/gcs-sync
+        run: npm install --no-audit --no-fund
+      - name: Run sync
+        working-directory: scripts/gcs-sync
+        env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          GCP_BUCKET: ${{ secrets.GCP_BUCKET }}
+          GCP_BUCKET_PREFIX: ${{ secrets.GCP_BUCKET_PREFIX }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GCS_OWNER_USER_ID: ${{ secrets.GCS_OWNER_USER_ID }}
+        run: node sync.mjs
