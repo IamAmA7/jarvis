@@ -1,8 +1,7 @@
 /**
  * SessionsView — cloud + local recording history (brutalist lime UI).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
-
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   deleteSession as apiDeleteSession,
   getSession,
@@ -119,7 +118,6 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
 
   const totalCount = cloud.length + rows.length;
   const totalHours = (totalDurationSec / 3600).toFixed(1);
-
   const showCloud = filter === 'all' || filter === 'cloud';
   const showLocal = filter === 'all' || filter === 'local';
 
@@ -131,9 +129,7 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
         </div>
         <div className="flex flex-wrap items-end justify-between gap-6">
           <h1 className="text-5xl font-bold uppercase leading-[0.95] tracking-tight md:text-6xl lg:text-7xl">
-            Архив
-            <br />
-            <span className="text-accent-500 text-glow">голоса</span>.
+            Архив <br /> <span className="text-accent-500 text-glow">голоса</span>.
           </h1>
           <div className="grid grid-cols-3 gap-4 sm:gap-6">
             <Stat num={totalCount.toString()} label="Записей" />
@@ -238,26 +234,16 @@ function Stat({ num, label }: { num: string; label: string }) {
 }
 
 function FilterChip({
-  active,
-  onClick,
-  label,
-  count,
-  icon,
+  active, onClick, label, count, icon,
 }: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count: number;
-  icon?: string;
+  active: boolean; onClick: () => void; label: string; count: number; icon?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-        active
-          ? 'bg-accent-500 text-black shadow-glow-accent'
-          : 'border border-ink-800 bg-ink-900 text-ink-300 hover:border-ink-700 hover:bg-ink-800'
+        active ? 'bg-accent-500 text-black shadow-glow-accent' : 'border border-ink-800 bg-ink-900 text-ink-300 hover:border-ink-700 hover:bg-ink-800'
       }`}
     >
       {icon && <span className="text-xs">{icon}</span>}
@@ -270,28 +256,16 @@ function FilterChip({
 }
 
 function RecCard({
-  active,
-  onClick,
-  title,
-  meta,
-  tag,
-  tagError,
+  active, onClick, title, meta, tag, tagError,
 }: {
-  active: boolean;
-  onClick: () => void;
-  title: string;
-  meta: string[];
-  tag?: string;
-  tagError?: boolean;
+  active: boolean; onClick: () => void; title: string; meta: string[]; tag?: string; tagError?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={`relative flex w-full flex-col items-start rounded-xl border px-3.5 py-3 text-left transition-all ${
-        active
-          ? 'border-accent-500/60 bg-accent-500/5 shadow-glow-accent'
-          : 'border-ink-800 bg-ink-900/40 hover:bg-ink-800/60'
+        active ? 'border-accent-500/60 bg-accent-500/5 shadow-glow-accent' : 'border-ink-800 bg-ink-900/40 hover:bg-ink-800/60'
       }`}
     >
       {active && (
@@ -316,25 +290,45 @@ function RecCard({
   );
 }
 
-function PanelTitle({ num, label }: { num: string; label: string }) {
+/** Brutalist accordion section with numbered chevron. */
+function Accordion({
+  num, label, defaultOpen = true, children, accent = false,
+}: {
+  num: string; label: string; defaultOpen?: boolean; children: React.ReactNode; accent?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <h3 className="mb-3 flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-300">
-      <span className="inline-grid h-5 w-5 place-items-center rounded-full border border-ink-700 font-mono text-[10px] text-accent-500">{num}</span>
-      {label}
-    </h3>
+    <div className={`overflow-hidden rounded-xl border ${open ? 'border-ink-700' : 'border-ink-800'} bg-ink-900/40`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-ink-800/40"
+      >
+        <span className={`inline-grid h-5 w-5 place-items-center rounded-full border font-mono text-[10px] ${
+          accent ? 'border-accent-500 text-accent-500' : 'border-ink-700 text-accent-500'
+        }`}>
+          {num}
+        </span>
+        <span className="flex-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-300">
+          {label}
+        </span>
+        <span className={`text-ink-500 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden>
+          ›
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-ink-800/80 px-4 pb-4 pt-3">{children}</div>
+      )}
+    </div>
   );
 }
 
-function AudioPlayer({ recId, getToken }: { recId: number; getToken: GetToken }) {
+function AudioPlayer({ recId, getToken, onLoaded }: { recId: number; getToken: GetToken; onLoaded?: (blob: Blob, url: string) => void }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setUrl(null);
-    setError(null);
-  }, [recId]);
-
+  useEffect(() => { setUrl(null); setError(null); }, [recId]);
   useEffect(() => {
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [url]);
@@ -354,7 +348,9 @@ function AudioPlayer({ recId, getToken }: { recId: number; getToken: GetToken })
         throw new Error(detail);
       }
       const blob = await res.blob();
-      setUrl(URL.createObjectURL(blob));
+      const u = URL.createObjectURL(blob);
+      setUrl(u);
+      onLoaded?.(blob, u);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -391,6 +387,208 @@ function AudioPlayer({ recId, getToken }: { recId: number; getToken: GetToken })
   );
 }
 
+/** Naive speaker-hint heuristic: split transcript on long pauses / line breaks /
+ *  sentence-ending punctuation patterns and alternate Speaker 1 / Speaker 2.
+ *  This is a UI affordance — true diarization requires Deepgram/AssemblyAI. */
+function splitBySpeakers(text: string): { speaker: number; text: string }[] {
+  const cleaned = text.trim();
+  if (!cleaned) return [];
+  let parts = cleaned.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) {
+    const sentences = cleaned.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) ?? [cleaned];
+    parts = [];
+    for (let i = 0; i < sentences.length; i += 2) {
+      parts.push(sentences.slice(i, i + 2).join(' ').trim());
+    }
+  }
+  return parts.filter(Boolean).map((t, i) => ({ speaker: (i % 2) + 1, text: t }));
+}
+
+function TranscriptView({ text }: { text: string }) {
+  const [bySpeaker, setBySpeaker] = useState(false);
+  const turns = useMemo(() => (bySpeaker ? splitBySpeakers(text) : []), [bySpeaker, text]);
+  if (!text) return <p className="text-sm text-ink-500">(пусто)</p>;
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setBySpeaker((v) => !v)}
+          className={`rounded-full px-3 py-1 font-mono text-[10px] uppercase tracking-[0.15em] transition-colors ${
+            bySpeaker ? 'bg-accent-500 text-black' : 'border border-ink-700 bg-ink-900 text-ink-300 hover:border-accent-500/50'
+          }`}
+        >
+          {bySpeaker ? '✓ По спикерам' : '○ По спикерам'}
+        </button>
+        {bySpeaker && (
+          <span className="text-[10px] text-ink-500">
+            * эвристика по паузам · точная диаризация требует Deepgram
+          </span>
+        )}
+      </div>
+      {bySpeaker ? (
+        <div className="space-y-2">
+          {turns.map((t, i) => (
+            <div key={i} className="flex gap-3 rounded-lg border border-ink-800 bg-ink-900/50 p-3">
+              <span className={`shrink-0 rounded border px-2 py-0.5 font-mono text-[10px] font-bold tracking-[0.1em] ${
+                t.speaker === 1 ? 'border-accent-500/60 text-accent-500' : 'border-ink-600 text-ink-300'
+              }`}>
+                S{t.speaker}
+              </span>
+              <p className="text-[15px] leading-[1.65] text-ink-100">{t.text}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="whitespace-pre-wrap text-[15px] leading-[1.7] text-ink-100">{text}</p>
+      )}
+    </div>
+  );
+}
+
+/** Download menu for cloud records. */
+function CloudDownloadMenu({
+  rec, getToken,
+}: { rec: CloudRow; getToken: GetToken }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  const safeName = baseName(rec.name).replace(/\.[^.]+$/, '');
+
+  const buildSummary = () => {
+    const ins = rec.insights as any;
+    const lines: string[] = [];
+    lines.push(`# ${baseName(rec.name)}`);
+    if (rec.recorded_at) lines.push(`_${fmtTime(rec.recorded_at)}_`);
+    lines.push('');
+    if (Array.isArray(ins?.summary) && ins.summary.length) {
+      lines.push('## Инсайты');
+      ins.summary.forEach((s: string) => lines.push(`- ${s}`));
+      lines.push('');
+    }
+    if (Array.isArray(ins?.key_topics) && ins.key_topics.length) {
+      lines.push('## Key topics');
+      lines.push(ins.key_topics.map((t: string) => `\`${t}\``).join(' '));
+      lines.push('');
+    }
+    if (Array.isArray(ins?.action_items) && ins.action_items.length) {
+      lines.push('## Action items');
+      ins.action_items.forEach((a: any) => {
+        lines.push(`- ${a.action}${a.owner ? ` (@${a.owner})` : ''}${a.deadline ? ` — ${a.deadline}` : ''}`);
+      });
+      lines.push('');
+    }
+    if (Array.isArray(ins?.open_questions) && ins.open_questions.length) {
+      lines.push('## Открытые вопросы');
+      ins.open_questions.forEach((q: string) => lines.push(`- ${q}`));
+      lines.push('');
+    }
+    lines.push('## Транскрипт');
+    lines.push(rec.transcript_text || '(пусто)');
+    return lines.join('\n');
+  };
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const onMd = () => {
+    downloadBlob(new Blob([buildSummary()], { type: 'text/markdown;charset=utf-8' }), `${safeName}.md`);
+    setOpen(false);
+  };
+  const onTxt = () => {
+    const txt = (rec.transcript_text || '').trim() || '(пусто)';
+    downloadBlob(new Blob([txt], { type: 'text/plain;charset=utf-8' }), `${safeName}.txt`);
+    setOpen(false);
+  };
+  const onJson = () => {
+    const payload = {
+      id: rec.id,
+      name: baseName(rec.name),
+      recorded_at: rec.recorded_at,
+      duration_sec: rec.duration_sec,
+      size_bytes: rec.size_bytes,
+      language: rec.language,
+      insights: rec.insights ?? null,
+      transcript: rec.transcript_text ?? null,
+    };
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), `${safeName}.json`);
+    setOpen(false);
+  };
+  const onAudio = async () => {
+    setBusy('audio');
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not signed in');
+      const res = await fetch(`/api/cloud/audio?id=${rec.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const blob = await res.blob();
+      const ext = (rec.content_type?.includes('mpeg') ? 'mp3' : (baseName(rec.name).match(/\.(\w+)$/)?.[1] ?? 'wav'));
+      downloadBlob(blob, `${safeName}.${ext}`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('audio download failed', err);
+    } finally {
+      setBusy(null);
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="rounded-full border border-ink-700 bg-ink-900 px-4 py-1.5 text-xs font-medium text-ink-200 hover:border-accent-500 hover:text-accent-500"
+      >
+        ↓ Скачать
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-2 min-w-[180px] overflow-hidden rounded-xl border border-ink-700 bg-ink-950 shadow-glow-accent">
+          <MenuItem onClick={onMd} hint=".md">Саммари (Markdown)</MenuItem>
+          <MenuItem onClick={onTxt} hint=".txt">Транскрипт (Text)</MenuItem>
+          <MenuItem onClick={onJson} hint=".json">Полный JSON</MenuItem>
+          <div className="border-t border-ink-800" />
+          <MenuItem onClick={onAudio} hint={busy === 'audio' ? '…' : 'audio'} disabled={!!busy}>
+            Аудио файл
+          </MenuItem>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ onClick, children, hint, disabled }: { onClick: () => void | Promise<void>; children: React.ReactNode; hint?: string; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={() => void onClick()}
+      disabled={disabled}
+      className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-xs text-ink-200 hover:bg-accent-500/10 hover:text-accent-500 disabled:opacity-50"
+    >
+      <span>{children}</span>
+      {hint && <span className="font-mono text-[10px] text-ink-500">{hint}</span>}
+    </button>
+  );
+}
+
 function CloudPane({ rec, getToken }: { rec: CloudRow; getToken: GetToken }) {
   const [copied, setCopied] = useState(false);
   const ins = rec.insights as any;
@@ -420,6 +618,15 @@ function CloudPane({ rec, getToken }: { rec: CloudRow; getToken: GetToken }) {
     );
   }
 
+  const sections: { num: string; key: string }[] = [];
+  sections.push({ num: '00', key: 'audio' });
+  if (Array.isArray(ins?.summary) && ins.summary.length > 0) sections.push({ num: pad(sections.length), key: 'summary' });
+  if (Array.isArray(ins?.key_topics) && ins.key_topics.length > 0) sections.push({ num: pad(sections.length), key: 'topics' });
+  if (Array.isArray(ins?.open_questions) && ins.open_questions.length > 0) sections.push({ num: pad(sections.length), key: 'questions' });
+  if (Array.isArray(ins?.action_items) && ins.action_items.length > 0) sections.push({ num: pad(sections.length), key: 'actions' });
+  sections.push({ num: pad(sections.length), key: 'transcript' });
+  const numFor = (key: string) => sections.find((s) => s.key === key)?.num ?? '00';
+
   return (
     <section className="rounded-xl border border-ink-800 bg-ink-900/40 p-6">
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-ink-800 pb-4">
@@ -436,85 +643,75 @@ function CloudPane({ rec, getToken }: { rec: CloudRow; getToken: GetToken }) {
             )}
           </p>
         </div>
-        <button type="button" onClick={handleCopy} className="rounded-full border border-ink-700 bg-ink-900 px-4 py-1.5 text-xs font-medium text-ink-200 hover:border-accent-500 hover:text-accent-500">
-          {copied ? 'Скопировано' : 'Copy'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={handleCopy} className="rounded-full border border-ink-700 bg-ink-900 px-4 py-1.5 text-xs font-medium text-ink-200 hover:border-accent-500 hover:text-accent-500">
+            {copied ? 'Скопировано' : 'Copy'}
+          </button>
+          <CloudDownloadMenu rec={rec} getToken={getToken} />
+        </div>
       </header>
 
-      <div className="mb-6">
-        <PanelTitle num="00" label="Аудио" />
-        <div className="rounded-xl border border-ink-800 bg-ink-900/50 p-4">
+      <div className="space-y-3">
+        <Accordion num={numFor('audio')} label="Аудио" defaultOpen accent>
           <AudioPlayer recId={rec.id} getToken={getToken} />
-        </div>
-      </div>
+        </Accordion>
 
-      {ins && (
-        <div className="mb-6 space-y-5">
-          {Array.isArray(ins.summary) && ins.summary.length > 0 && (
-            <div>
-              <PanelTitle num="01" label="Инсайты" />
-              <ul className="space-y-2">
-                {ins.summary.map((s: string, i: number) => (
-                  <li key={i} className="flex gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-4 py-3 text-sm leading-relaxed">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500 shadow-glow-accent" />
-                    <span>{s}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+        {ins && Array.isArray(ins.summary) && ins.summary.length > 0 && (
+          <Accordion num={numFor('summary')} label="Инсайты" defaultOpen>
+            <ul className="space-y-2">
+              {ins.summary.map((s: string, i: number) => (
+                <li key={i} className="flex gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-4 py-3 text-sm leading-relaxed">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500 shadow-glow-accent" />
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
+          </Accordion>
+        )}
 
-          <div className="grid gap-5 md:grid-cols-2">
-            {Array.isArray(ins.key_topics) && ins.key_topics.length > 0 && (
-              <div>
-                <PanelTitle num="02" label="Key topics" />
-                <p className="flex flex-wrap gap-1.5">
-                  {ins.key_topics.map((t: string) => (
-                    <span key={t} className="rounded-full border border-accent-500/30 bg-accent-500/5 px-2.5 py-1 font-mono text-[11px] text-accent-500">
-                      {t}
-                    </span>
-                  ))}
-                </p>
-              </div>
-            )}
-            {Array.isArray(ins.open_questions) && ins.open_questions.length > 0 && (
-              <div>
-                <PanelTitle num="03" label="Открытые вопросы" />
-                <ul className="space-y-1.5">
-                  {ins.open_questions.map((q: string, i: number) => (
-                    <li key={i} className="rounded-r-lg border-l-2 border-accent-500 bg-ink-900/50 px-3 py-2 text-sm text-ink-200">
-                      <span className="text-accent-500">?</span> {q}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
+        {ins && Array.isArray(ins.key_topics) && ins.key_topics.length > 0 && (
+          <Accordion num={numFor('topics')} label="Key topics" defaultOpen={false}>
+            <p className="flex flex-wrap gap-1.5">
+              {ins.key_topics.map((t: string) => (
+                <span key={t} className="rounded-full border border-accent-500/30 bg-accent-500/5 px-2.5 py-1 font-mono text-[11px] text-accent-500">
+                  {t}
+                </span>
+              ))}
+            </p>
+          </Accordion>
+        )}
 
-          {Array.isArray(ins.action_items) && ins.action_items.length > 0 && (
-            <div>
-              <PanelTitle num="04" label="Action items" />
-              <ul className="space-y-1.5">
-                {ins.action_items.map((a: any, i: number) => (
-                  <li key={i} className="grid grid-cols-[auto,1fr,auto] items-center gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-3 py-2.5">
-                    <span className="h-4 w-4 rounded border border-ink-700" />
-                    <span className="text-sm">{a.action}</span>
-                    <span className="font-mono text-[10px] text-accent-500">
-                      {a.owner ? `@${a.owner}` : ''}{a.deadline ? ` · ${a.deadline}` : ''}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+        {ins && Array.isArray(ins.open_questions) && ins.open_questions.length > 0 && (
+          <Accordion num={numFor('questions')} label="Открытые вопросы" defaultOpen={false}>
+            <ul className="space-y-1.5">
+              {ins.open_questions.map((q: string, i: number) => (
+                <li key={i} className="rounded-r-lg border-l-2 border-accent-500 bg-ink-900/50 px-3 py-2 text-sm text-ink-200">
+                  <span className="text-accent-500">?</span> {q}
+                </li>
+              ))}
+            </ul>
+          </Accordion>
+        )}
 
-      <PanelTitle num={ins ? '05' : '01'} label="Транскрипт" />
-      <div className="rounded-xl border border-ink-800 bg-ink-900/40 p-5">
-        <p className="whitespace-pre-wrap text-[15px] leading-[1.7] text-ink-100">
-          {rec.transcript_text || '(пусто)'}
-        </p>
+        {ins && Array.isArray(ins.action_items) && ins.action_items.length > 0 && (
+          <Accordion num={numFor('actions')} label="Action items" defaultOpen>
+            <ul className="space-y-1.5">
+              {ins.action_items.map((a: any, i: number) => (
+                <li key={i} className="grid grid-cols-[auto,1fr,auto] items-center gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-3 py-2.5">
+                  <span className="h-4 w-4 rounded border border-ink-700" />
+                  <span className="text-sm">{a.action}</span>
+                  <span className="font-mono text-[10px] text-accent-500">
+                    {a.owner ? `@${a.owner}` : ''}{a.deadline ? ` · ${a.deadline}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Accordion>
+        )}
+
+        <Accordion num={numFor('transcript')} label="Транскрипт" defaultOpen={false}>
+          <TranscriptView text={rec.transcript_text || ''} />
+        </Accordion>
       </div>
     </section>
   );
@@ -577,7 +774,6 @@ function SessionDetailPane({ getToken, sessionId, onDeleted }: DetailPaneProps) 
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
   };
-
   const handleDelete = async () => {
     if (!confirm('Удалить эту сессию? Это действие необратимо.')) return;
     setBusy(true);
@@ -610,52 +806,53 @@ function SessionDetailPane({ getToken, sessionId, onDeleted }: DetailPaneProps) 
         </div>
       </header>
 
-      {session.insight && (
-        <div className="mb-6 space-y-5">
-          <div>
-            <PanelTitle num="01" label="Инсайты" />
-            <ul className="space-y-2">
-              {session.insight.summary.map((s, i) => (
-                <li key={i} className="flex gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-4 py-3 text-sm leading-relaxed">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500 shadow-glow-accent" />
-                  <span>{s}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          {session.insight.action_items.length > 0 && (
-            <div>
-              <PanelTitle num="02" label="Action items" />
-              <ul className="space-y-1.5">
-                {session.insight.action_items.map((a, i) => (
-                  <li key={i} className="grid grid-cols-[auto,1fr,auto] items-center gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-3 py-2.5">
-                    <span className="h-4 w-4 rounded border border-ink-700" />
-                    <span className="text-sm">{a.action}</span>
-                    <span className="font-mono text-[10px] text-accent-500">{a.owner ? `@${a.owner}` : ''}{a.deadline ? ` · ${a.deadline}` : ''}</span>
+      <div className="space-y-3">
+        {session.insight && (
+          <>
+            <Accordion num="01" label="Инсайты" defaultOpen accent>
+              <ul className="space-y-2">
+                {session.insight.summary.map((s, i) => (
+                  <li key={i} className="flex gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-4 py-3 text-sm leading-relaxed">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500 shadow-glow-accent" />
+                    <span>{s}</span>
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
-          {session.insight.key_topics.length > 0 && (
-            <div>
-              <PanelTitle num="03" label="Key topics" />
-              <p className="flex flex-wrap gap-1.5">
-                {session.insight.key_topics.map((t) => (
-                  <span key={t} className="rounded-full border border-accent-500/30 bg-accent-500/5 px-2.5 py-1 font-mono text-[11px] text-accent-500">{t}</span>
-                ))}
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      <PanelTitle num={session.insight ? '04' : '01'} label="Транскрипт" />
-      <div className="rounded-xl border border-ink-800 bg-ink-900/40 p-5">
-        <p className="whitespace-pre-wrap text-[15px] leading-[1.7] text-ink-100">{transcript || '(пусто)'}</p>
+            </Accordion>
+            {session.insight.action_items.length > 0 && (
+              <Accordion num="02" label="Action items" defaultOpen>
+                <ul className="space-y-1.5">
+                  {session.insight.action_items.map((a, i) => (
+                    <li key={i} className="grid grid-cols-[auto,1fr,auto] items-center gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-3 py-2.5">
+                      <span className="h-4 w-4 rounded border border-ink-700" />
+                      <span className="text-sm">{a.action}</span>
+                      <span className="font-mono text-[10px] text-accent-500">{a.owner ? `@${a.owner}` : ''}{a.deadline ? ` · ${a.deadline}` : ''}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Accordion>
+            )}
+            {session.insight.key_topics.length > 0 && (
+              <Accordion num="03" label="Key topics" defaultOpen={false}>
+                <p className="flex flex-wrap gap-1.5">
+                  {session.insight.key_topics.map((t) => (
+                    <span key={t} className="rounded-full border border-accent-500/30 bg-accent-500/5 px-2.5 py-1 font-mono text-[11px] text-accent-500">{t}</span>
+                  ))}
+                </p>
+              </Accordion>
+            )}
+          </>
+        )}
+        <Accordion num={session.insight ? '04' : '01'} label="Транскрипт" defaultOpen={false}>
+          <TranscriptView text={transcript} />
+        </Accordion>
       </div>
     </section>
   );
+}
+
+function pad(n: number) {
+  return n.toString().padStart(2, '0');
 }
 
 function baseName(p: string) {
