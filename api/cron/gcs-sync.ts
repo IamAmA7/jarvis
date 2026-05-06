@@ -281,14 +281,27 @@ export default async function handler(req: any): Promise<Response> {
     if (req.method !== 'GET' && req.method !== 'POST') {
       return json(405, { error: 'GET/POST only' });
     }
+    console.log('[gcs-sync] start: cron header=', getHeader(req, 'x-vercel-cron'));
     verifyCron(req);
+    console.log('[gcs-sync] verified');
+
     const bucket = (process.env.GCP_BUCKET ?? '').trim();
     const prefix = (process.env.GCP_BUCKET_PREFIX ?? '').trim();
     const ownerUserId = (process.env.GCS_OWNER_USER_ID ?? '').trim() || null;
     if (!bucket) return json(500, { error: 'GCP_BUCKET env var not set' });
+    console.log('[gcs-sync] bucket=', bucket, 'prefix=', prefix);
+
+    console.log('[gcs-sync] getting access token...');
     const token = await getAccessToken();
+    console.log('[gcs-sync] got token (len=', token.length, ')');
+
+    console.log('[gcs-sync] listing objects...');
     const objects = await listObjects(bucket, token, prefix);
+    console.log('[gcs-sync] listed', objects.length, 'objects');
+
+    console.log('[gcs-sync] loading seen from supabase...');
     const seen = await loadSeen(bucket);
+    console.log('[gcs-sync] loaded', seen.size, 'seen entries');
     const fresh = objects
       .filter((o) => !seen.has(o.name))
       .sort((a, b) => (a.timeCreated > b.timeCreated ? 1 : -1))
