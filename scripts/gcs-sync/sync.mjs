@@ -30,7 +30,7 @@ const STORAGE_BASE = 'https://storage.googleapis.com/storage/v1';
 const OPENAI_TRANSCRIBE_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
-const MAX_FILES_PER_RUN = 5;
+const MAX_FILES_PER_RUN = 20
 const WHISPER_MAX_BYTES = 25 * 1024 * 1024;
 
 function envRequired(name) {
