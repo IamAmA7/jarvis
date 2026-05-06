@@ -89,7 +89,7 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
   }, []);
 
   const totalDurationSec = useMemo(() => {
-    return (cloud ?? []).reduce((s, r) => s + (r.duration_sec ?? 0), 0);
+    return (cloud ?? []).reduce((s, r) => s + (r.duration_sec ?? 300), 0);
   }, [cloud]);
   const totalActionItems = useMemo(() => {
     return (cloud ?? []).reduce((s, r) => s + (Array.isArray(r.insights?.action_items) ? r.insights.action_items.length : 0), 0);
