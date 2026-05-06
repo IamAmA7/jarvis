@@ -1,6 +1,6 @@
 export const config = { runtime: 'nodejs', maxDuration: 10 };
 
-export default async function handler(req) {
+export default async function handler(req: any) {
   const env = process.env;
   const sa = env.GCP_SERVICE_ACCOUNT_JSON || '';
   return new Response(
