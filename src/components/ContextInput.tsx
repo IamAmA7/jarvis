@@ -15,7 +15,7 @@ export function ContextInput({ value, onChange, disabled }: ContextInputProps) {
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
         rows={2}
-        placeholder="e.g. Board meeting, AMA Invest, Q2 strategic review"
+        placeholder="Расскажите о чём встреча в 2-3 предложениях"
         className="resize-none rounded-md border border-ink-800 bg-ink-900/60 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-500 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/40 disabled:opacity-60"
       />
       <span className="text-[11px] text-ink-500">
