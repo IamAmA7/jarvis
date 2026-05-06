@@ -16,8 +16,10 @@ const REPO = 'IamAmA7/jarvis';
 const WORKFLOW_FILE = 'gcs-sync.yml';
 
 export default async function handler(req: Request): Promise<Response> {
-  const auth = req.headers.get('authorization');
-  if (auth !== 'Bearer ' + process.env.CRON_SECRET) {
+  const isVercelCron = req.headers.get('x-vercel-cron') === '1';
+  const secret = process.env.CRON_SECRET;
+  const matchesSecret = secret && req.headers.get('authorization') === 'Bearer ' + secret;
+  if (!isVercelCron && !matchesSecret) {
     return jsonResponse(401, { ok: false, error: 'unauthorized' });
   }
 
