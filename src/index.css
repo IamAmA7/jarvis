@@ -4,27 +4,30 @@
 
 :root {
   color-scheme: dark;
+  --accent: #C5FF3A;
+  --accent-glow: rgba(197, 255, 58, 0.45);
+  --accent-glow-lg: rgba(197, 255, 58, 0.6);
 }
 
-html,
-body,
-#root {
-  height: 100%;
+html, body, #root { height: 100%; }
+body { font-feature-settings: 'cv11', 'ss01', 'ss03'; background: #000; color: #e8e8e8; }
+
+/* Glow on text — used for hero accents in the brutalist lime aesthetic. */
+.text-glow { text-shadow: 0 0 28px var(--accent-glow); }
+.text-glow-lg { text-shadow: 0 0 48px var(--accent-glow-lg); }
+
+/* Pulse dot used in status pills. */
+.dot-accent {
+  display: inline-block;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
 }
 
-body {
-  font-feature-settings: 'cv11', 'ss01', 'ss03';
-}
+/* Brutalist brackets utility. */
+.kicker { letter-spacing: 0.22em; text-transform: uppercase; }
 
-/* Slim scrollbars that don't fight the minimal aesthetic. */
-.scrollbar-thin::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 9999px;
-}
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
-}
+/* Slim scrollbars. */
+.scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 9999px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }

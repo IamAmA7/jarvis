@@ -5,28 +5,35 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Muted ink palette — minimal, easy on the eyes for long listening sessions.
+        // Pure-black ink palette for the brutalist lime aesthetic.
         ink: {
-          50:  '#f6f7f9',
-          100: '#eceff3',
-          200: '#d3d9e2',
-          300: '#a9b3c2',
-          400: '#7a8699',
-          500: '#54607a',
-          600: '#3b4559',
-          700: '#29324a',
-          800: '#1a2138',
-          900: '#10162a',
-          950: '#080b18',
+          50: '#fafafa',
+          100: '#e8e8e8',
+          200: '#c8c8c8',
+          300: '#a0a0a0',
+          400: '#6b6b6b',
+          500: '#4a4a4a',
+          600: '#2e2e2e',
+          700: '#1f1f1f',
+          800: '#131313',
+          900: '#0a0a0a',
+          950: '#000000',
         },
+        // Acid lime accent.
         accent: {
-          500: '#7c5cff',
-          600: '#6a49ef',
+          400: '#D6FF66',
+          500: '#C5FF3A',
+          600: '#A8E020',
+          700: '#86B515',
         },
       },
       fontFamily: {
         sans: ['"Inter"', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+      },
+      boxShadow: {
+        'glow-accent': '0 0 24px rgba(197, 255, 58, 0.45)',
+        'glow-accent-lg': '0 0 40px rgba(197, 255, 58, 0.55)',
       },
       keyframes: {
         pulseDot: {
