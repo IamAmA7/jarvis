@@ -13,7 +13,7 @@
  *     access token at https://oauth2.googleapis.com/token.
  */
 import { SignJWT, importPKCS8 } from 'jose';
-import { admin } from '../_lib/supabase';
+import { admin } from '../_lib/supabase.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
