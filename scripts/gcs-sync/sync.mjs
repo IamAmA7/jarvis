@@ -120,7 +120,7 @@ async function transcribeWhisper(file, filename) {
   form.append('file', file, filename);
   form.append('model', 'whisper-1');
   form.append('response_format', 'verbose_json');
-  form.append('temperature', '0');
+  form.append('temperature', '0'); form.append('language', 'ru');
   const res = await fetch(OPENAI_TRANSCRIBE_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
