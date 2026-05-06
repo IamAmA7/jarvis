@@ -1,12 +1,8 @@
 /**
- * SessionsView — combined cloud + local recording history.
- *
- * Shows two sections:
- *   1. Cloud recordings (from `gcs_synced_files`, populated by GitHub Actions
- *      cron in `scripts/gcs-sync` from the GCS bucket every 5 minutes)
- *   2. Local sessions (in-app recordings, from /api/sessions)
+ * SessionsView — cloud + local recording history (brutalist lime UI).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+
 import {
   deleteSession as apiDeleteSession,
   getSession,
@@ -89,14 +85,17 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const totalDurationSec = useMemo(() => {
+    return (cloud ?? []).reduce((s, r) => s + (r.duration_sec ?? 0), 0);
+  }, [cloud]);
+  const totalActionItems = useMemo(() => {
+    return (cloud ?? []).reduce((s, r) => s + (Array.isArray(r.insights?.action_items) ? r.insights.action_items.length : 0), 0);
+  }, [cloud]);
+
   if (rows === null || cloud === null) {
     return (
       <div className="mx-auto w-full max-w-2xl rounded-lg border border-ink-800 bg-ink-900/40 p-10 text-center text-sm text-ink-400">
-        {listError ? (
-          <span className="text-red-300">{listError}</span>
-        ) : (
-          'Загружаем историю…'
-        )}
+        {listError ? <span className="text-red-300">{listError}</span> : 'Загружаем историю…'}
       </div>
     );
   }
@@ -106,107 +105,169 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
       <div className="mx-auto w-full max-w-2xl rounded-lg border border-ink-800 bg-ink-900/40 p-10 text-center">
         <h2 className="text-lg font-semibold">Пока нет сохранённых записей</h2>
         <p className="mt-2 text-sm text-ink-400">
-          Локальные записи появятся здесь по мере того, как вы их делаете.
-          Облачные записи (из GCS bucket) подтягиваются автоматически каждые 5 минут.
+          Локальные записи появятся здесь по мере того, как вы их делаете. Облачные записи (из GCS bucket) подтягиваются автоматически каждые 5 минут.
         </p>
-        <button
-          type="button"
-          onClick={onGoToRecord}
-          className="mt-4 rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600"
-        >
+        <button type="button" onClick={onGoToRecord} className="mt-4 rounded-full bg-accent-500 px-5 py-2 text-sm font-semibold text-white shadow-glow-accent hover:opacity-90">
           Начать запись
         </button>
       </div>
     );
   }
 
+  const totalCount = cloud.length + rows.length;
+  const totalHours = (totalDurationSec / 3600).toFixed(1);
+
   return (
-    <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-4 md:grid-cols-[280px,1fr]">
-      <aside className="space-y-3">
-        {cloud.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between px-2">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-accent-400">
-                ☁ Облако · {cloud.length}
-              </h2>
-              <button
-                type="button"
-                onClick={() => void refresh()}
-                className="text-[11px] text-ink-500 hover:text-ink-300"
-              >
-                обновить
-              </button>
-            </div>
-            {cloud.map((c) => (
-              <button
-                key={`c-${c.id}`}
-                type="button"
-                onClick={() => { setOpenCloudId(c.id); setOpenId(null); }}
-                className={`flex w-full flex-col items-start rounded-md border px-3 py-2 text-left transition-colors ${
-                  openCloudId === c.id
-                    ? 'border-accent-500/60 bg-accent-500/10'
-                    : 'border-ink-800 bg-ink-900/40 hover:bg-ink-800/60'
-                }`}
-              >
-                <span className="text-sm font-medium">{baseName(c.name)}</span>
-                <span className="mt-0.5 flex flex-wrap gap-1.5 text-[11px] text-ink-400">
-                  <span>{fmtTime(c.recorded_at)}</span>
-                  {c.duration_sec != null && <span>· {Math.round(c.duration_sec)}s</span>}
-                  {c.status === 'error' && <span className="text-red-300">· ошибка</span>}
-                </span>
-              </button>
-            ))}
+    <div className="mx-auto w-full max-w-6xl">
+      {/* HERO STRIP */}
+      <section className="mb-8 border-b border-ink-800 pb-6">
+        <div className="kicker mb-3 text-[11px] text-ink-400">
+          [ ИСТОРИЯ · {totalCount} {totalCount === 1 ? 'ЗАПИСЬ' : 'ЗАПИСЕЙ'} · ОБЛАКО + ЛОКАЛЬНЫЕ ]
+        </div>
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <h1 className="text-5xl font-bold uppercase leading-[0.95] tracking-tight md:text-6xl lg:text-7xl">
+            Архив
+            <br />
+            <span className="text-accent-500 text-glow">голоса</span>.
+          </h1>
+          <div className="grid grid-cols-3 gap-4 sm:gap-6">
+            <Stat num={totalCount.toString()} label="Записей" />
+            <Stat num={`${totalHours} ч`} label="Транскриб." />
+            <Stat num={totalActionItems.toString()} label="Action items" />
           </div>
-        )}
+        </div>
+      </section>
 
-        {rows.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between px-2">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-400">
-                Локальные · {rows.length}
-              </h2>
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-[320px,1fr]">
+        <aside className="space-y-5">
+          {cloud.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-300">
+                  <span className="dot-accent" /> Облако · <span className="text-accent-500">{cloud.length}</span>
+                </h2>
+                <button type="button" onClick={() => void refresh()} className="text-[11px] text-ink-500 hover:text-accent-500">
+                  обновить ↻
+                </button>
+              </div>
+              {cloud.map((c) => (
+                <RecCard
+                  key={`c-${c.id}`}
+                  active={openCloudId === c.id}
+                  onClick={() => { setOpenCloudId(c.id); setOpenId(null); }}
+                  title={baseName(c.name)}
+                  meta={[fmtTime(c.recorded_at), c.duration_sec != null ? `${Math.round(c.duration_sec)}s` : '', c.status === 'error' ? 'ошибка' : ''].filter(Boolean)}
+                  tag="CLOUD"
+                  tagError={c.status === 'error'}
+                />
+              ))}
             </div>
-            {rows.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => { setOpenId(s.id); setOpenCloudId(null); }}
-                className={`flex w-full flex-col items-start rounded-md border px-3 py-2 text-left transition-colors ${
-                  openId === s.id
-                    ? 'border-accent-500/60 bg-accent-500/10'
-                    : 'border-ink-800 bg-ink-900/40 hover:bg-ink-800/60'
-                }`}
-              >
-                <span className="text-sm font-medium">
-                  {new Date(s.started_at).toLocaleString()}
-                </span>
-                <span className="mt-0.5 line-clamp-2 text-xs text-ink-400">
-                  {s.context || s.title || '(без контекста)'}
-                </span>
-              </button>
-            ))}
-          </div>
+          )}
+
+          {rows.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">
+                  Локальные · <span className="text-ink-200">{rows.length}</span>
+                </h2>
+              </div>
+              {rows.map((s) => (
+                <RecCard
+                  key={s.id}
+                  active={openId === s.id}
+                  onClick={() => { setOpenId(s.id); setOpenCloudId(null); }}
+                  title={new Date(s.started_at).toLocaleString()}
+                  meta={[(s.context || s.title || '(без контекста)').slice(0, 60)]}
+                  tag="LOCAL"
+                />
+              ))}
+            </div>
+          )}
+        </aside>
+
+        {openCloudId !== null && (() => {
+          const c = cloud.find((x) => x.id === openCloudId);
+          return c ? <CloudPane key={c.id} rec={c} /> : null;
+        })()}
+        {openId && (
+          <SessionDetailPane
+            key={openId}
+            getToken={getToken}
+            sessionId={openId}
+            onDeleted={async () => {
+              track('session:delete', { id: openId });
+              setOpenId(null);
+              await refresh();
+            }}
+          />
         )}
-      </aside>
-
-      {openCloudId !== null && (() => {
-        const c = cloud.find((x) => x.id === openCloudId);
-        return c ? <CloudPane key={c.id} rec={c} /> : null;
-      })()}
-
-      {openId && (
-        <SessionDetailPane
-          key={openId}
-          getToken={getToken}
-          sessionId={openId}
-          onDeleted={async () => {
-            track('session:delete', { id: openId });
-            setOpenId(null);
-            await refresh();
-          }}
-        />
-      )}
+      </div>
     </div>
+  );
+}
+
+function Stat({ num, label }: { num: string; label: string }) {
+  return (
+    <div className="border-l-2 border-ink-800 pl-3">
+      <div className="text-2xl font-bold tracking-tight">{num}</div>
+      <div className="kicker mt-0.5 text-[10px] text-ink-400">{label}</div>
+    </div>
+  );
+}
+
+function RecCard({
+  active,
+  onClick,
+  title,
+  meta,
+  tag,
+  tagError,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  meta: string[];
+  tag?: string;
+  tagError?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative flex w-full flex-col items-start rounded-xl border px-3.5 py-3 text-left transition-all ${
+        active
+          ? 'border-accent-500/60 bg-accent-500/5 shadow-glow-accent'
+          : 'border-ink-800 bg-ink-900/40 hover:bg-ink-800/60'
+      }`}
+    >
+      {active && (
+        <span className="absolute -left-px top-3 bottom-3 w-[3px] rounded-full bg-accent-500 shadow-glow-accent" aria-hidden />
+      )}
+      {tag && (
+        <span className={`mb-1 inline-block rounded border px-1.5 py-px font-mono text-[9px] font-bold tracking-[0.1em] ${
+          tagError ? 'border-red-500/50 text-red-300' : 'border-accent-500/60 text-accent-500'
+        }`}>
+          {tag}
+        </span>
+      )}
+      <span className="text-sm font-semibold text-ink-100">{title}</span>
+      {meta.length > 0 && (
+        <span className="mt-1 flex flex-wrap gap-x-1.5 gap-y-0.5 text-[11px] text-ink-400">
+          {meta.map((m, i) => (
+            <span key={i} className={i > 0 ? 'before:mr-1.5 before:text-ink-600 before:content-[\"·\"]' : ''}>{m}</span>
+          ))}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function PanelTitle({ num, label }: { num: string; label: string }) {
+  return (
+    <h3 className="mb-3 flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-300">
+      <span className="inline-grid h-5 w-5 place-items-center rounded-full border border-ink-700 font-mono text-[10px] text-accent-500">{num}</span>
+      {label}
+    </h3>
   );
 }
 
@@ -232,7 +293,7 @@ function CloudPane({ rec }: { rec: CloudRow }) {
 
   if (rec.status === 'error') {
     return (
-      <section className="rounded-lg border border-red-900/60 bg-red-950/30 p-5 text-sm text-red-200">
+      <section className="rounded-xl border border-red-900/60 bg-red-950/30 p-5 text-sm text-red-200">
         <h2 className="text-base font-semibold">{baseName(rec.name)}</h2>
         <p className="mt-2 text-xs">{rec.error_message ?? 'Error'}</p>
       </section>
@@ -240,85 +301,81 @@ function CloudPane({ rec }: { rec: CloudRow }) {
   }
 
   return (
-    <section className="rounded-lg border border-ink-800 bg-ink-900/40 p-5">
-      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <section className="rounded-xl border border-ink-800 bg-ink-900/40 p-6">
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-ink-800 pb-4">
         <div>
-          <h2 className="text-lg font-semibold">{baseName(rec.name)}</h2>
-          <p className="mt-0.5 flex flex-wrap gap-2 text-xs text-ink-400">
-            <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-accent-300">☁ облако</span>
-            <span>{fmtTime(rec.recorded_at)}</span>
-            {rec.duration_sec != null && <span>· {(rec.duration_sec / 60).toFixed(1)} мин</span>}
-            {rec.language && <span>· {rec.language}</span>}
+          <h2 className="text-2xl font-bold tracking-tight">{baseName(rec.name)}</h2>
+          <p className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
+            <span className="rounded-full border border-accent-500/40 bg-accent-500/10 px-2.5 py-0.5 text-accent-500">☁ облако</span>
+            <span className="rounded-full border border-ink-800 bg-ink-900 px-2.5 py-0.5 text-ink-300">{fmtTime(rec.recorded_at)}</span>
+            {rec.duration_sec != null && (
+              <span className="rounded-full border border-ink-800 bg-ink-900 px-2.5 py-0.5 text-ink-300">{(rec.duration_sec / 60).toFixed(1)} мин</span>
+            )}
             {rec.size_bytes != null && (
-              <span>· {(rec.size_bytes / 1024 / 1024).toFixed(2)} MB</span>
+              <span className="rounded-full border border-ink-800 bg-ink-900 px-2.5 py-0.5 text-ink-300">{(rec.size_bytes / 1024 / 1024).toFixed(2)} MB</span>
             )}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="rounded-md border border-ink-800 px-2.5 py-1 text-xs hover:bg-ink-800/60"
-        >
+        <button type="button" onClick={handleCopy} className="rounded-full border border-ink-700 bg-ink-900 px-4 py-1.5 text-xs font-medium text-ink-200 hover:border-accent-500 hover:text-accent-500">
           {copied ? 'Скопировано' : 'Copy'}
         </button>
       </header>
 
       {ins && (
-        <div className="mb-5 space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-400">
-            Инсайты
-          </h3>
+        <div className="mb-6 space-y-5">
           {Array.isArray(ins.summary) && ins.summary.length > 0 && (
-            <ul className="space-y-1.5">
-              {ins.summary.map((s: string, i: number) => (
-                <li key={i} className="flex gap-2 text-sm">
-                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500" />
-                  <span>{s}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {Array.isArray(ins.action_items) && ins.action_items.length > 0 && (
             <div>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-ink-500">
-                Action items
-              </h4>
-              <ul className="mt-1 space-y-1">
-                {ins.action_items.map((a: any, i: number) => (
-                  <li key={i} className="text-sm">
-                    • {a.action}
-                    {a.owner && <span className="text-ink-400"> — {a.owner}</span>}
-                    {a.deadline && <span className="text-ink-500"> (к {a.deadline})</span>}
+              <PanelTitle num="01" label="Инсайты" />
+              <ul className="space-y-2">
+                {ins.summary.map((s: string, i: number) => (
+                  <li key={i} className="flex gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-4 py-3 text-sm leading-relaxed">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500 shadow-glow-accent" />
+                    <span>{s}</span>
                   </li>
                 ))}
               </ul>
             </div>
           )}
-          {Array.isArray(ins.key_topics) && ins.key_topics.length > 0 && (
+
+          <div className="grid gap-5 md:grid-cols-2">
+            {Array.isArray(ins.key_topics) && ins.key_topics.length > 0 && (
+              <div>
+                <PanelTitle num="02" label="Key topics" />
+                <p className="flex flex-wrap gap-1.5">
+                  {ins.key_topics.map((t: string) => (
+                    <span key={t} className="rounded-full border border-accent-500/30 bg-accent-500/5 px-2.5 py-1 font-mono text-[11px] text-accent-500">
+                      {t}
+                    </span>
+                  ))}
+                </p>
+              </div>
+            )}
+            {Array.isArray(ins.open_questions) && ins.open_questions.length > 0 && (
+              <div>
+                <PanelTitle num="03" label="Открытые вопросы" />
+                <ul className="space-y-1.5">
+                  {ins.open_questions.map((q: string, i: number) => (
+                    <li key={i} className="rounded-r-lg border-l-2 border-accent-500 bg-ink-900/50 px-3 py-2 text-sm text-ink-200">
+                      <span className="text-accent-500">?</span> {q}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {Array.isArray(ins.action_items) && ins.action_items.length > 0 && (
             <div>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-ink-500">
-                Key topics
-              </h4>
-              <p className="mt-1 flex flex-wrap gap-1.5 text-xs">
-                {ins.key_topics.map((t: string) => (
-                  <span
-                    key={t}
-                    className="rounded-full border border-ink-800 px-2 py-0.5 font-mono text-ink-300"
-                  >
-                    {t}
-                  </span>
-                ))}
-              </p>
-            </div>
-          )}
-          {Array.isArray(ins.open_questions) && ins.open_questions.length > 0 && (
-            <div>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-ink-500">
-                Открытые вопросы
-              </h4>
-              <ul className="mt-1 space-y-0.5">
-                {ins.open_questions.map((q: string, i: number) => (
-                  <li key={i} className="text-sm">? {q}</li>
+              <PanelTitle num="04" label="Action items" />
+              <ul className="space-y-1.5">
+                {ins.action_items.map((a: any, i: number) => (
+                  <li key={i} className="grid grid-cols-[auto,1fr,auto] items-center gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-3 py-2.5">
+                    <span className="h-4 w-4 rounded border border-ink-700" />
+                    <span className="text-sm">{a.action}</span>
+                    <span className="font-mono text-[10px] text-accent-500">
+                      {a.owner ? `@${a.owner}` : ''}{a.deadline ? ` · ${a.deadline}` : ''}
+                    </span>
+                  </li>
                 ))}
               </ul>
             </div>
@@ -326,12 +383,12 @@ function CloudPane({ rec }: { rec: CloudRow }) {
         </div>
       )}
 
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
-        Транскрипт
-      </h3>
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-200">
-        {rec.transcript_text || '(пусто)'}
-      </p>
+      <PanelTitle num={ins ? '05' : '01'} label="Транскрипт" />
+      <div className="rounded-xl border border-ink-800 bg-ink-900/40 p-5">
+        <p className="whitespace-pre-wrap text-[15px] leading-[1.7] text-ink-100">
+          {rec.transcript_text || '(пусто)'}
+        </p>
+      </div>
     </section>
   );
 }
@@ -406,54 +463,59 @@ function SessionDetailPane({ getToken, sessionId, onDeleted }: DetailPaneProps) 
     }
   };
 
-  if (error) {
-    return <section className="rounded-lg border border-red-900/60 bg-red-950/30 p-5 text-sm text-red-200">{error}</section>;
-  }
-  if (!session) {
-    return <section className="rounded-lg border border-ink-800 bg-ink-900/40 p-5 text-sm text-ink-400">Загружаем…</section>;
-  }
+  if (error) return <section className="rounded-xl border border-red-900/60 bg-red-950/30 p-5 text-sm text-red-200">{error}</section>;
+  if (!session) return <section className="rounded-xl border border-ink-800 bg-ink-900/40 p-5 text-sm text-ink-400">Загружаем…</section>;
 
   const transcript = session.chunks.filter((c) => c.status === 'final').map((c) => c.text.trim()).filter(Boolean).join(' ');
 
   return (
-    <section className="rounded-lg border border-ink-800 bg-ink-900/40 p-5">
-      <header className="mb-4 flex items-start justify-between gap-3">
+    <section className="rounded-xl border border-ink-800 bg-ink-900/40 p-6">
+      <header className="mb-5 flex items-start justify-between gap-3 border-b border-ink-800 pb-4">
         <div>
-          <h2 className="text-lg font-semibold">{new Date(session.createdAt).toLocaleString()}</h2>
-          {session.context && <p className="mt-0.5 text-xs text-ink-400">{session.context}</p>}
+          <h2 className="text-2xl font-bold tracking-tight">{new Date(session.createdAt).toLocaleString()}</h2>
+          {session.context && <p className="mt-1 text-xs text-ink-400">{session.context}</p>}
         </div>
         <div className="flex items-center gap-1.5 text-xs">
-          <button type="button" onClick={handleCopy} className="rounded-md border border-ink-800 px-2.5 py-1 hover:bg-ink-800/60">{copied ? 'Скопировано' : 'Copy MD'}</button>
-          <button type="button" onClick={() => exportMarkdown(session)} className="rounded-md border border-ink-800 px-2.5 py-1 hover:bg-ink-800/60">.md</button>
-          <button type="button" onClick={() => exportPdf(session)} className="rounded-md border border-ink-800 px-2.5 py-1 hover:bg-ink-800/60">.pdf</button>
-          <button type="button" onClick={handleDelete} disabled={busy} className="rounded-md border border-red-900/60 bg-red-950/30 px-2.5 py-1 text-red-200 hover:bg-red-950/50 disabled:opacity-50">{busy ? 'Удаляю…' : 'Удалить'}</button>
+          <button type="button" onClick={handleCopy} className="rounded-full border border-ink-700 bg-ink-900 px-3 py-1.5 hover:border-accent-500 hover:text-accent-500">{copied ? 'Скопировано' : 'Copy MD'}</button>
+          <button type="button" onClick={() => exportMarkdown(session)} className="rounded-full border border-ink-700 bg-ink-900 px-3 py-1.5 hover:border-accent-500 hover:text-accent-500">.md</button>
+          <button type="button" onClick={() => exportPdf(session)} className="rounded-full border border-ink-700 bg-ink-900 px-3 py-1.5 hover:border-accent-500 hover:text-accent-500">.pdf</button>
+          <button type="button" onClick={handleDelete} disabled={busy} className="rounded-full border border-red-900/60 bg-red-950/30 px-3 py-1.5 text-red-200 hover:bg-red-950/50 disabled:opacity-50">{busy ? 'Удаляю…' : 'Удалить'}</button>
         </div>
       </header>
 
       {session.insight && (
-        <div className="mb-5 space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-400">Инсайты</h3>
-          <ul className="space-y-1.5">
-            {session.insight.summary.map((s, i) => (
-              <li key={i} className="flex gap-2 text-sm"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500" /><span>{s}</span></li>
-            ))}
-          </ul>
+        <div className="mb-6 space-y-5">
+          <div>
+            <PanelTitle num="01" label="Инсайты" />
+            <ul className="space-y-2">
+              {session.insight.summary.map((s, i) => (
+                <li key={i} className="flex gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-4 py-3 text-sm leading-relaxed">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500 shadow-glow-accent" />
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
           {session.insight.action_items.length > 0 && (
             <div>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-ink-500">Action items</h4>
-              <ul className="mt-1 space-y-1">
+              <PanelTitle num="02" label="Action items" />
+              <ul className="space-y-1.5">
                 {session.insight.action_items.map((a, i) => (
-                  <li key={i} className="text-sm">• {a.action}{a.owner && <span className="text-ink-400"> — {a.owner}</span>}{a.deadline && <span className="text-ink-500"> (к {a.deadline})</span>}</li>
+                  <li key={i} className="grid grid-cols-[auto,1fr,auto] items-center gap-3 rounded-lg border border-ink-800 bg-ink-900/50 px-3 py-2.5">
+                    <span className="h-4 w-4 rounded border border-ink-700" />
+                    <span className="text-sm">{a.action}</span>
+                    <span className="font-mono text-[10px] text-accent-500">{a.owner ? `@${a.owner}` : ''}{a.deadline ? ` · ${a.deadline}` : ''}</span>
+                  </li>
                 ))}
               </ul>
             </div>
           )}
           {session.insight.key_topics.length > 0 && (
             <div>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-ink-500">Key topics</h4>
-              <p className="mt-1 flex flex-wrap gap-1.5 text-xs">
+              <PanelTitle num="03" label="Key topics" />
+              <p className="flex flex-wrap gap-1.5">
                 {session.insight.key_topics.map((t) => (
-                  <span key={t} className="rounded-full border border-ink-800 px-2 py-0.5 font-mono text-ink-300">{t}</span>
+                  <span key={t} className="rounded-full border border-accent-500/30 bg-accent-500/5 px-2.5 py-1 font-mono text-[11px] text-accent-500">{t}</span>
                 ))}
               </p>
             </div>
@@ -461,11 +523,21 @@ function SessionDetailPane({ getToken, sessionId, onDeleted }: DetailPaneProps) 
         </div>
       )}
 
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">Транскрипт</h3>
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-200">{transcript || '(пусто)'}</p>
+      <PanelTitle num={session.insight ? '04' : '01'} label="Транскрипт" />
+      <div className="rounded-xl border border-ink-800 bg-ink-900/40 p-5">
+        <p className="whitespace-pre-wrap text-[15px] leading-[1.7] text-ink-100">{transcript || '(пусто)'}</p>
+      </div>
     </section>
   );
 }
 
-function baseName(p: string) { const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(i + 1) : p; }
-function fmtTime(s: string | null) { if (!s) return ''; const d = new Date(s); return Number.isNaN(d.getTime()) ? s : d.toLocaleString(); }
+function baseName(p: string) {
+  const i = p.lastIndexOf('/');
+  return i >= 0 ? p.slice(i + 1) : p;
+}
+
+function fmtTime(s: string | null) {
+  if (!s) return '';
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleString();
+}
