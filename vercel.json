@@ -1,48 +1,28 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "framework": "vite",
-  "functions": {
-    "api/stripe/webhook.ts": {
-      "maxDuration": 10
+    "$schema": "https://openapi.vercel.sh/vercel.json",
+    "buildCommand": "npm run build",
+    "outputDirectory": "dist",
+    "framework": "vite",
+    "functions": {
+          "api/stripe/webhook.ts": { "maxDuration": 10 },
+          "api/transcribe.ts": { "maxDuration": 30 },
+          "api/insights.ts": { "maxDuration": 60 },
+          "api/ingest.ts": { "maxDuration": 60 },
+          "api/cron/digest.ts": { "maxDuration": 60 }
     },
-    "api/transcribe.ts": {
-      "maxDuration": 30
-    },
-    "api/insights.ts": {
-      "maxDuration": 60
-    },
-    "api/ingest.ts": {
-      "maxDuration": 60
-    },
-    "api/cron/digest.ts": {
-      "maxDuration": 60
-    },
-        "api/cron/gcs-sync.ts": {
-              "maxDuration": 60
-                  }
-  },
-  "crons": [
-    {
-      "path": "/api/cron/digest",
-      "schedule": "0 19 * * *"
-    },
-        {
-              "path": "/api/cron/gcs-sync",
-                    "schedule": "*/5 * * * *"
-                        }
-  ],
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ],
-  "headers": [
-    {
-      "source": "/assets/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-      ]
-    }
-  ]
+    "crons": [
+          { "path": "/api/cron/digest", "schedule": "0 19 * * *" }
+    ],
+    "rewrites": [
+          { "source": "/api/(.*)", "destination": "/api/$1" },
+          { "source": "/(.*)", "destination": "/index.html" }
+    ],
+    "headers": [
+          {
+                  "source": "/assets/(.*)",
+                  "headers": [
+                            { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+                  ]
+          }
+    ]
 }
