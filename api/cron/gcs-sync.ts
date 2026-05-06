@@ -43,11 +43,23 @@ class HttpError extends Error {
   constructor(status: number, message: string) { super(message); this.status = status; }
 }
 
-function verifyCron(req: Request): void {
-  if (req.headers.get('x-vercel-cron')) return;
+function getHeader(req: any, name: string): string | null {
+  const h = req?.headers;
+  if (!h) return null;
+  if (typeof h.get === 'function') return h.get(name);
+  if (typeof h === 'object') {
+    const v = h[name.toLowerCase()];
+    if (Array.isArray(v)) return v[0] ?? null;
+    return (v ?? null) as string | null;
+  }
+  return null;
+}
+
+function verifyCron(req: any): void {
+  if (getHeader(req, 'x-vercel-cron')) return;
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) throw new HttpError(500, 'CRON_SECRET not configured');
-  const auth = req.headers.get('authorization') ?? '';
+  const auth = getHeader(req, 'authorization') ?? '';
   if (auth !== `Bearer ${cronSecret}`) throw new HttpError(401, 'Unauthorized cron request');
 }
 
@@ -264,7 +276,7 @@ function parseRfc3339(s: string): string | null {
   return Number.isNaN(t) ? null : new Date(t).toISOString();
 }
 
-export default async function handler(req: Request): Promise<Response> {
+export default async function handler(req: any): Promise<Response> {
   try {
     if (req.method !== 'GET' && req.method !== 'POST') {
       return json(405, { error: 'GET/POST only' });
