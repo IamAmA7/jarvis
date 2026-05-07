@@ -1,13 +1,21 @@
 /**
- * GET /api/cloud/audio?id=NN — stream a cloud-synced audio file from GCS.
+ * GET /api/cloud/audio?id=NN — stream a stored audio file.
  *
- * Authenticates the Clerk user, verifies the recording belongs to them via
- * `gcs_synced_files.clerk_user_id`, mints a GCS access token from the service
- * account and proxies the audio bytes back to the browser. The HTML5 <audio>
- * element on the platform fetches this endpoint to play the recording inline.
+ * Two storage backends:
+ *   • bucket = 'aa_audio_2026' (or any GCS bucket name)
+ *       — Raspberry Pi recordings synced via the GCS cron pipeline.
+ *       Mints a short-lived GCS access token from our service account and
+ *       proxies the audio bytes from `storage.googleapis.com`.
+ *   • bucket = 'manual'
+ *       — Files manually uploaded via /api/upload/init + /api/upload/finalize.
+ *       Live in Supabase Storage (`manual-uploads` bucket); we stream them
+ *       through the Supabase admin client.
+ *
+ * The HTML5 <audio> element on the platform fetches this endpoint to play the
+ * recording inline. Both branches verify the row's `clerk_user_id` matches
+ * the caller before serving any bytes.
  */
 import { SignJWT, importPKCS8 } from 'jose';
-
 import { errorResponse, HttpError, requireUser } from '../_lib/auth';
 import { admin } from '../_lib/supabase';
 
@@ -16,6 +24,7 @@ export const config = { runtime: 'edge' };
 const GCS_READ_SCOPE = 'https://www.googleapis.com/auth/devstorage.read_only';
 const STORAGE_BASE = 'https://storage.googleapis.com/storage/v1';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const MANUAL_BUCKET = 'manual-uploads';
 
 async function getAccessToken(): Promise<string> {
   const json = process.env.GCP_SERVICE_ACCOUNT_JSON;
@@ -36,7 +45,6 @@ async function getAccessToken(): Promise<string> {
     .setIssuedAt(issuedAt)
     .setExpirationTime(issuedAt + 3600)
     .sign(key);
-
   const res = await fetch(tokenUri, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -58,7 +66,6 @@ export default async function handler(req: Request): Promise<Response> {
   try {
     const { userId } = await requireUser(req);
     if (req.method !== 'GET') throw new HttpError(405, 'GET only');
-
     const url = new URL(req.url);
     const idStr = url.searchParams.get('id');
     if (!idStr) throw new HttpError(400, 'id query param is required');
@@ -74,6 +81,22 @@ export default async function handler(req: Request): Promise<Response> {
     if (!data) throw new HttpError(404, 'recording not found');
     if (data.clerk_user_id !== userId) throw new HttpError(403, 'forbidden');
 
+    // Manual uploads live in Supabase Storage, not GCS.
+    if (data.bucket === 'manual') {
+      const { data: blob, error: dlErr } = await admin()
+        .storage.from(MANUAL_BUCKET)
+        .download(data.name);
+      if (dlErr || !blob) {
+        throw new HttpError(500, `Storage fetch failed: ${dlErr?.message ?? 'no blob'}`);
+      }
+      const headers = new Headers();
+      headers.set('Content-Type', data.content_type || 'audio/mpeg');
+      headers.set('Cache-Control', 'private, max-age=300');
+      headers.set('Content-Length', String(blob.size));
+      return new Response(blob.stream(), { status: 200, headers });
+    }
+
+    // Cloud sync recordings live in GCS.
     const token = await getAccessToken();
     const gcsUrl = `${STORAGE_BASE}/b/${encodeURIComponent(data.bucket)}/o/${encodeURIComponent(data.name)}?alt=media`;
     const gcsRes = await fetch(gcsUrl, {
@@ -83,7 +106,6 @@ export default async function handler(req: Request): Promise<Response> {
       const detail = (await gcsRes.text()).slice(0, 200);
       throw new HttpError(502, `GCS fetch failed: ${gcsRes.status} ${detail}`);
     }
-
     const headers = new Headers();
     headers.set('Content-Type', data.content_type || 'audio/wav');
     headers.set('Cache-Control', 'private, max-age=300');
