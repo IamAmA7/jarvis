@@ -30,7 +30,7 @@ export function Header({
   onSignOut,
 }: HeaderProps) {
   return (
-    <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-ink-800 bg-black/85 px-6 py-4 backdrop-blur-md">
+    <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 border-b border-ink-800 bg-black/85 px-3 py-3 backdrop-blur-md sm:gap-3 sm:px-6 sm:py-4">
       <div className="flex items-center gap-3">
         <Logo />
         <div>
@@ -47,7 +47,7 @@ export function Header({
               key={t.id}
               type="button"
               onClick={() => onChangeView(t.id)}
-              className={`flex-1 rounded-full px-4 py-2 text-sm font-medium transition-all md:flex-none ${
+              className={`flex-1 rounded-full px-2.5 py-2 text-xs font-medium transition-all sm:px-4 sm:text-sm md:flex-none ${
                 active
                   ? 'bg-accent-500 text-black shadow-glow-accent'
                   : 'text-ink-400 hover:bg-ink-800 hover:text-ink-100'
