@@ -100,12 +100,7 @@ function SignedInApp() {
   }, []);
 
   const transcription = useTranscription({ settings, getToken });
-  const insights = useInsights({
-    settings,
-    getToken,
-    sessionId,
-    context,
-  });
+  const insights = useInsights({ settings, getToken, sessionId, context });
 
   useEffect(() => {
     insights.observe(transcription.chunks);
@@ -319,23 +314,23 @@ function RecordView({
 
 // ————— Upload card —————
 //
-// Direct browser → GCS uploads need bucket-level CORS, which our service
-// account may not have permission to configure. So we proxy through Vercel:
-//   1. POST /api/upload/init   → creates a GCS resumable upload session
-//   2. Loop: POST /api/upload/chunk with each ≤3 MB slice + Content-Range
-// The uploaded object lands in the same `aa_audio_2026` bucket the GCS
-// sync cron already watches — uploaded recording appears under
-// История → Облако within ~30–60 s after the cron runs.
+// Manual upload pipeline (independent of GCS cloud sync):
+//   1. POST /api/upload/init        → Supabase Storage signed upload URL
+//   2. PUT signedUrl                → browser uploads file directly to Supabase
+//   3. POST /api/upload/finalize    → server downloads, transcribes (Whisper),
+//                                     extracts insights (Claude), inserts row
+//                                     into gcs_synced_files with bucket='manual'
+// The GCS bucket and the cron that watches it are NOT touched.
 
 type UploadStatus =
   | { kind: 'idle' }
   | { kind: 'preparing' }
   | { kind: 'uploading'; pct: number }
+  | { kind: 'processing' }
   | { kind: 'success'; objectName: string }
   | { kind: 'error'; message: string };
 
-const CHUNK_BYTES = 3 * 1024 * 1024; // 3 MB — comfortably under Vercel's 4.5 MB body limit.
-const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB.
+const MAX_FILE_BYTES = 25 * 1024 * 1024; // Whisper API single-call limit
 
 function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: () => void }) {
   const [status, setStatus] = useState<UploadStatus>({ kind: 'idle' });
@@ -347,7 +342,7 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
       if (file.size > MAX_FILE_BYTES) {
         setStatus({
           kind: 'error',
-          message: `Файл слишком большой (${(file.size / 1024 / 1024).toFixed(1)} MB · макс. 500 MB)`,
+          message: `Файл ${(file.size / 1024 / 1024).toFixed(1)} MB больше лимита ${MAX_FILE_BYTES / 1024 / 1024} MB. Сожмите аудио (например, в mp3 64–128 kbps) или используйте облачную синхронизацию.`,
         });
         return;
       }
@@ -356,7 +351,7 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
         const token = await getToken();
         if (!token) throw new Error('Не авторизованы');
 
-        // 1. Start a GCS resumable upload session via our backend.
+        // 1. Get a Supabase Storage signed upload URL.
         const initRes = await fetch('/api/upload/init', {
           method: 'POST',
           headers: {
@@ -375,57 +370,60 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
             const b = (await initRes.json()) as { error?: string };
             if (b.error) detail = b.error;
           } catch {}
-          throw new Error(`Не удалось получить URL: ${detail}`);
+          throw new Error(`Init failed: ${detail}`);
         }
         const init = (await initRes.json()) as {
-          sessionUrl: string;
-          objectName: string;
+          signedUrl: string;
+          path: string;
           contentType: string;
         };
 
-        // 2. Stream the file to GCS in chunks via our proxy endpoint.
-        let offset = 0;
+        // 2. PUT the file straight to Supabase Storage. Supabase configures
+        //    CORS for its storage subdomain, so this works from the browser.
         setStatus({ kind: 'uploading', pct: 0 });
-        while (offset < file.size) {
-          const end = Math.min(offset + CHUNK_BYTES, file.size);
-          const slice = file.slice(offset, end);
-          const range = `bytes ${offset}-${end - 1}/${file.size}`;
-          const chunkRes = await fetch('/api/upload/chunk', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/octet-stream',
-              'X-Session-Url': encodeURIComponent(init.sessionUrl),
-              'X-Content-Range': range,
-            },
-            body: slice,
-          });
-          if (!chunkRes.ok) {
-            let detail = `${chunkRes.status}`;
-            try {
-              const b = (await chunkRes.json()) as { error?: string };
-              if (b.error) detail = b.error;
-            } catch {}
-            throw new Error(`Чанк ${offset}-${end - 1} не загрузился: ${detail}`);
-          }
-          offset = end;
-          setStatus({ kind: 'uploading', pct: Math.round((offset / file.size) * 100) });
-        }
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', init.signedUrl);
+          xhr.setRequestHeader('Content-Type', init.contentType);
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              setStatus({ kind: 'uploading', pct: Math.round((e.loaded / e.total) * 100) });
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error(`Загрузка не удалась: ${xhr.status} ${xhr.responseText.slice(0, 120)}`));
+          };
+          xhr.onerror = () => reject(new Error('Сетевая ошибка при загрузке'));
+          xhr.send(file);
+        });
 
-        // 3. Poke the GCS sync cron so the file is processed in seconds, not
-        //    minutes. Best-effort — if it fails, the regular 5-min tick will
-        //    still pick the file up.
-        try {
-          await fetch('/api/cron/trigger-sync', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-          });
-        } catch {
-          /* ignored */
+        // 3. Trigger transcription + insights + DB insert.
+        setStatus({ kind: 'processing' });
+        const finalizeRes = await fetch('/api/upload/finalize', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            path: init.path,
+            filename: file.name,
+            contentType: file.type || 'application/octet-stream',
+            size: file.size,
+          }),
+        });
+        if (!finalizeRes.ok) {
+          let detail = `${finalizeRes.status}`;
+          try {
+            const b = (await finalizeRes.json()) as { error?: string };
+            if (b.error) detail = b.error;
+          } catch {}
+          throw new Error(`Обработка не удалась: ${detail}`);
         }
 
         track('upload:success', { size: file.size, type: file.type });
-        setStatus({ kind: 'success', objectName: init.objectName });
+        setStatus({ kind: 'success', objectName: init.path });
       } catch (err) {
         track('upload:error', {
           message: err instanceof Error ? err.message : String(err),
@@ -450,7 +448,10 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
     if (f) void upload(f);
   };
 
-  const busy = status.kind === 'preparing' || status.kind === 'uploading';
+  const busy =
+    status.kind === 'preparing' ||
+    status.kind === 'uploading' ||
+    status.kind === 'processing';
 
   return (
     <div
@@ -478,7 +479,7 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Загрузить готовый файл</h3>
             <p className="mt-0.5 text-xs text-ink-400">
-              Аудио/видео до 500 MB. Перетащите сюда или выберите файл — транскрипция и инсайты появятся в Истории через минуту.
+              Аудио/видео до 25 MB. Транскрипция Whisper + инсайты Claude. Появится в Истории через 30–60 сек.
             </p>
           </div>
         </div>
@@ -509,9 +510,15 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
                 Загрузка {status.pct}%
               </>
             )}
-            {status.kind !== 'preparing' && status.kind !== 'uploading' && (
-              <>📂 Выбрать файл</>
+            {status.kind === 'processing' && (
+              <>
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+                Транскрибация…
+              </>
             )}
+            {status.kind !== 'preparing' &&
+              status.kind !== 'uploading' &&
+              status.kind !== 'processing' && <>📂 Выбрать файл</>}
           </button>
         </div>
       </div>
@@ -525,9 +532,15 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
         </div>
       )}
 
+      {status.kind === 'processing' && (
+        <div className="mt-3 rounded-md border border-accent-500/40 bg-accent-500/5 px-3 py-2 text-xs text-ink-300">
+          Файл загружен. Whisper транскрибирует, Claude генерит инсайты — это занимает 20–40 сек, не закрывайте вкладку.
+        </div>
+      )}
+
       {status.kind === 'success' && (
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-accent-500/40 bg-accent-500/10 px-3 py-2 text-xs text-accent-500">
-          <span>✓ Файл загружен. Обработка ~30–60 сек, потом смотрите в Истории.</span>
+          <span>✓ Готово. Транскрипция и инсайты сохранены.</span>
           <button
             type="button"
             onClick={onUploaded}
