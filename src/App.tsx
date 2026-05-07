@@ -99,7 +99,6 @@ function SignedInApp() {
     saveSettings(next);
   }, []);
 
-  // ————— Recording stack —————
   const transcription = useTranscription({ settings, getToken });
   const insights = useInsights({
     settings,
@@ -320,12 +319,13 @@ function RecordView({
 
 // ————— Upload card —————
 //
-// User picks an audio/video file → we POST {filename, contentType, size} to
-// /api/upload/init which mints a V2 signed PUT URL for our GCS bucket. The
-// browser then uploads the file directly to GCS (bypassing Vercel's 4.5 MB
-// edge body limit). The existing GCS sync cron picks the file up on its next
-// tick (≤5 min) and runs the standard transcribe + insights pipeline; the
-// recording then appears under История → Облако.
+// Direct browser → GCS uploads need bucket-level CORS, which our service
+// account may not have permission to configure. So we proxy through Vercel:
+//   1. POST /api/upload/init   → creates a GCS resumable upload session
+//   2. Loop: POST /api/upload/chunk with each ≤3 MB slice + Content-Range
+// The uploaded object lands in the same `aa_audio_2026` bucket the GCS
+// sync cron already watches — uploaded recording appears under
+// История → Облако within ~30–60 s after the cron runs.
 
 type UploadStatus =
   | { kind: 'idle' }
@@ -334,6 +334,9 @@ type UploadStatus =
   | { kind: 'success'; objectName: string }
   | { kind: 'error'; message: string };
 
+const CHUNK_BYTES = 3 * 1024 * 1024; // 3 MB — comfortably under Vercel's 4.5 MB body limit.
+const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB.
+
 function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: () => void }) {
   const [status, setStatus] = useState<UploadStatus>({ kind: 'idle' });
   const [drag, setDrag] = useState(false);
@@ -341,9 +344,11 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
 
   const upload = useCallback(
     async (file: File) => {
-      const MAX = 200 * 1024 * 1024;
-      if (file.size > MAX) {
-        setStatus({ kind: 'error', message: `Файл слишком большой (${(file.size / 1024 / 1024).toFixed(1)} MB · макс. 200 MB)` });
+      if (file.size > MAX_FILE_BYTES) {
+        setStatus({
+          kind: 'error',
+          message: `Файл слишком большой (${(file.size / 1024 / 1024).toFixed(1)} MB · макс. 500 MB)`,
+        });
         return;
       }
       setStatus({ kind: 'preparing' });
@@ -351,6 +356,7 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
         const token = await getToken();
         if (!token) throw new Error('Не авторизованы');
 
+        // 1. Start a GCS resumable upload session via our backend.
         const initRes = await fetch('/api/upload/init', {
           method: 'POST',
           headers: {
@@ -372,43 +378,62 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
           throw new Error(`Не удалось получить URL: ${detail}`);
         }
         const init = (await initRes.json()) as {
-          uploadUrl: string;
+          sessionUrl: string;
           objectName: string;
           contentType: string;
         };
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('PUT', init.uploadUrl);
-          xhr.setRequestHeader('Content-Type', init.contentType);
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              const pct = Math.round((e.loaded / e.total) * 100);
-              setStatus({ kind: 'uploading', pct });
-            }
-          };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve();
-            else reject(new Error(`GCS отказался принимать файл: ${xhr.status} ${xhr.responseText.slice(0, 120)}`));
-          };
-          xhr.onerror = () => reject(new Error('Сетевая ошибка при загрузке. Проверьте CORS бакета.'));
-          xhr.send(file);
-        });
+        // 2. Stream the file to GCS in chunks via our proxy endpoint.
+        let offset = 0;
+        setStatus({ kind: 'uploading', pct: 0 });
+        while (offset < file.size) {
+          const end = Math.min(offset + CHUNK_BYTES, file.size);
+          const slice = file.slice(offset, end);
+          const range = `bytes ${offset}-${end - 1}/${file.size}`;
+          const chunkRes = await fetch('/api/upload/chunk', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/octet-stream',
+              'X-Session-Url': encodeURIComponent(init.sessionUrl),
+              'X-Content-Range': range,
+            },
+            body: slice,
+          });
+          if (!chunkRes.ok) {
+            let detail = `${chunkRes.status}`;
+            try {
+              const b = (await chunkRes.json()) as { error?: string };
+              if (b.error) detail = b.error;
+            } catch {}
+            throw new Error(`Чанк ${offset}-${end - 1} не загрузился: ${detail}`);
+          }
+          offset = end;
+          setStatus({ kind: 'uploading', pct: Math.round((offset / file.size) * 100) });
+        }
 
+        // 3. Poke the GCS sync cron so the file is processed in seconds, not
+        //    minutes. Best-effort — if it fails, the regular 5-min tick will
+        //    still pick the file up.
         try {
           await fetch('/api/cron/trigger-sync', {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
           });
         } catch {
-          /* ignored — cron will pick it up on its next tick anyway */
+          /* ignored */
         }
 
         track('upload:success', { size: file.size, type: file.type });
         setStatus({ kind: 'success', objectName: init.objectName });
       } catch (err) {
-        track('upload:error', { message: err instanceof Error ? err.message : String(err) });
-        setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        track('upload:error', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+        setStatus({
+          kind: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     },
     [getToken],
@@ -453,7 +478,7 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Загрузить готовый файл</h3>
             <p className="mt-0.5 text-xs text-ink-400">
-              Аудио/видео до 200 MB. Перетащите сюда или выберите файл — транскрипция и инсайты появятся в Истории через минуту.
+              Аудио/видео до 500 MB. Перетащите сюда или выберите файл — транскрипция и инсайты появятся в Истории через минуту.
             </p>
           </div>
         </div>
@@ -475,7 +500,7 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
             {status.kind === 'preparing' && (
               <>
                 <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
-                Подпись URL…
+                Подготовка…
               </>
             )}
             {status.kind === 'uploading' && (
