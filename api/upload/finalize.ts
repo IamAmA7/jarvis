@@ -11,11 +11,16 @@
  *
  * No interaction with GCS — the cloud sync (Raspberry Pi → GCS bucket → cron)
  * is a separate pipeline and is unaffected.
+ *
+ * Runs on Node.js serverless (not Edge) so we can give Whisper enough time
+ * (up to 5 min) for larger files. Imports use .js extensions because Vercel's
+ * Node.js runtime resolves modules with strict ESM rules.
  */
-import { errorResponse, HttpError, json, requireUser } from '../_lib/auth';
-import { admin } from '../_lib/supabase';
+import { errorResponse, HttpError, json, requireUser } from '../_lib/auth.js';
+import { admin } from '../_lib/supabase.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
+
 const BUCKET = 'manual-uploads';
 
 interface FinalizeBody {
