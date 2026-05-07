@@ -16,7 +16,7 @@ const TABS: { id: AppView; label: string }[] = [
   { id: 'record', label: 'Запись' },
   { id: 'sessions', label: 'История' },
   { id: 'billing', label: 'Тариф' },
-  { id: 'settings', label: 'Настройки' },
+  { id: 'access', label: 'Доступы' },  { id: 'settings', label: 'Настройки' },
 ];
 
 export function Header({
