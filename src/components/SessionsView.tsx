@@ -19,7 +19,7 @@ interface SessionsViewProps {
   onGoToRecord: () => void;
 }
 
-type SourceFilter = 'all' | 'cloud' | 'local';
+type SourceFilter = 'all' | 'cloud' | 'manual' | 'local';
 
 interface CloudRow {
   id: number;
@@ -46,8 +46,6 @@ async function listCloud(getToken: GetToken): Promise<CloudRow[]> {
     try { const b = await res.json() as { error?: string }; if (b.error) detail = b.error; } catch {}
     throw new Error(`Cloud: ${detail}`);
   }
-  // Resilient parsing — during a Vercel deploy the SPA fallback can serve HTML
-  // instead of JSON. Surface a friendly message instead of "Unexpected token '<'".
   const text = await res.text();
   try {
     const body = JSON.parse(text) as { recordings: CloudRow[] };
@@ -57,11 +55,12 @@ async function listCloud(getToken: GetToken): Promise<CloudRow[]> {
   }
 }
 
+const isManual = (r: CloudRow) => r.bucket === 'manual';
+
 function dayKey(s: string | null | undefined): string | null {
   if (!s) return null;
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return null;
-  // Local-time YYYY-MM-DD so the date picker matches what the user sees.
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -77,6 +76,7 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
   const [filter, setFilter] = useState<SourceFilter>('all');
   const [dateFilter, setDateFilter] = useState<string>('');
   const [cloudOpen, setCloudOpen] = useState(true);
+  const [manualOpen, setManualOpen] = useState(true);
   const [localOpen, setLocalOpen] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -108,17 +108,23 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cloud + local filtered by selected date (if any).
-  const cloudFiltered = useMemo(() => {
-    if (!dateFilter) return cloud ?? [];
-    return (cloud ?? []).filter((c) => dayKey(c.recorded_at) === dateFilter);
-  }, [cloud, dateFilter]);
+  // Split cloud rows into Pi-recorded vs manually uploaded.
+  const cloudPi = useMemo(() => (cloud ?? []).filter((r) => !isManual(r)), [cloud]);
+  const cloudManual = useMemo(() => (cloud ?? []).filter((r) => isManual(r)), [cloud]);
+
+  const cloudPiFiltered = useMemo(() => {
+    if (!dateFilter) return cloudPi;
+    return cloudPi.filter((c) => dayKey(c.recorded_at) === dateFilter);
+  }, [cloudPi, dateFilter]);
+  const cloudManualFiltered = useMemo(() => {
+    if (!dateFilter) return cloudManual;
+    return cloudManual.filter((c) => dayKey(c.recorded_at) === dateFilter);
+  }, [cloudManual, dateFilter]);
   const rowsFiltered = useMemo(() => {
     if (!dateFilter) return rows ?? [];
     return (rows ?? []).filter((r) => dayKey(r.started_at) === dateFilter);
   }, [rows, dateFilter]);
 
-  // Available dates (sorted desc) for quick pick.
   const availableDates = useMemo(() => {
     const set = new Set<string>();
     (cloud ?? []).forEach((c) => { const k = dayKey(c.recorded_at); if (k) set.add(k); });
@@ -127,11 +133,14 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
   }, [cloud, rows]);
 
   const totalDurationSec = useMemo(() => {
-    return cloudFiltered.reduce((s, r) => s + (r.duration_sec ?? 300), 0);
-  }, [cloudFiltered]);
+    return [...cloudPiFiltered, ...cloudManualFiltered].reduce((s, r) => s + (r.duration_sec ?? 300), 0);
+  }, [cloudPiFiltered, cloudManualFiltered]);
   const totalActionItems = useMemo(() => {
-    return cloudFiltered.reduce((s, r) => s + (Array.isArray(r.insights?.action_items) ? r.insights.action_items.length : 0), 0);
-  }, [cloudFiltered]);
+    return [...cloudPiFiltered, ...cloudManualFiltered].reduce(
+      (s, r) => s + (Array.isArray(r.insights?.action_items) ? r.insights.action_items.length : 0),
+      0,
+    );
+  }, [cloudPiFiltered, cloudManualFiltered]);
 
   if (rows === null || cloud === null) {
     return (
@@ -155,17 +164,18 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
     );
   }
 
-  const totalCount = cloudFiltered.length + rowsFiltered.length;
-  const totalCountAll = cloud.length + rows.length;
+  const totalCount = cloudPiFiltered.length + cloudManualFiltered.length + rowsFiltered.length;
+  const totalCountAll = cloudPi.length + cloudManual.length + rows.length;
   const totalHours = (totalDurationSec / 3600).toFixed(1);
   const showCloud = filter === 'all' || filter === 'cloud';
+  const showManual = filter === 'all' || filter === 'manual';
   const showLocal = filter === 'all' || filter === 'local';
 
   return (
     <div className="mx-auto w-full max-w-6xl">
       <section className="mb-6 border-b border-ink-800 pb-6">
         <div className="kicker mb-3 text-[11px] text-ink-400">
-          [ ИСТОРИЯ · {totalCount} {totalCount === 1 ? 'ЗАПИСЬ' : 'ЗАПИСЕЙ'}{dateFilter ? ` · ${dateFilter}` : ' · ОБЛАКО + ЛОКАЛЬНЫЕ'} ]
+          [ ИСТОРИЯ · {totalCount} {totalCount === 1 ? 'ЗАПИСЬ' : 'ЗАПИСЕЙ'}{dateFilter ? ` · ${dateFilter}` : ' · ОБЛАКО + ЗАГРУЗКИ + ЛОКАЛЬНЫЕ'} ]
         </div>
         <div className="flex flex-wrap items-end justify-between gap-6">
           <h1 className="text-5xl font-bold uppercase leading-[0.95] tracking-tight md:text-6xl lg:text-7xl">
@@ -181,14 +191,15 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
 
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <FilterChip active={filter === 'all'} onClick={() => setFilter('all')} label="Все" count={dateFilter ? totalCount : totalCountAll} />
-        <FilterChip active={filter === 'cloud'} onClick={() => setFilter('cloud')} label="Облако" count={cloudFiltered.length} icon="☁" />
+        <FilterChip active={filter === 'cloud'} onClick={() => setFilter('cloud')} label="Облако" count={cloudPiFiltered.length} icon="☁" />
+        <FilterChip active={filter === 'manual'} onClick={() => setFilter('manual')} label="Загрузки" count={cloudManualFiltered.length} icon="↑" />
         <FilterChip active={filter === 'local'} onClick={() => setFilter('local')} label="Локальные" count={rowsFiltered.length} icon="●" />
         <DateFilter value={dateFilter} onChange={setDateFilter} available={availableDates} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[320px,1fr]">
         <aside className="space-y-5">
-          {showCloud && cloud.length > 0 && (
+          {showCloud && cloudPi.length > 0 && (
             <div className="space-y-1.5">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <button
@@ -197,13 +208,13 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
                   className="flex flex-1 items-center gap-2 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-300 hover:text-accent-500"
                 >
                   <span className={`text-ink-500 transition-transform ${cloudOpen ? 'rotate-90' : ''}`} aria-hidden>›</span>
-                  <span className="dot-accent" /> Облако · <span className="text-accent-500">{cloudFiltered.length}</span>
+                  <span className="dot-accent" /> Облако · <span className="text-accent-500">{cloudPiFiltered.length}</span>
                 </button>
                 <button type="button" onClick={() => void refresh()} className="text-[11px] text-ink-500 hover:text-accent-500">
                   обновить ↻
                 </button>
               </div>
-              {cloudOpen && cloudFiltered.map((c) => (
+              {cloudOpen && cloudPiFiltered.map((c) => (
                 <RecCard
                   key={`c-${c.id}`}
                   active={openCloudId === c.id}
@@ -214,11 +225,32 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
                   tagError={c.status === 'error'}
                 />
               ))}
-              {cloudOpen && cloudFiltered.length === 0 && dateFilter && (
-                <div className="rounded-lg border border-ink-800 bg-ink-900/30 p-3 text-center text-[11px] text-ink-500">
-                  Нет облачных записей за {dateFilter}
-                </div>
-              )}
+            </div>
+          )}
+
+          {showManual && cloudManual.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setManualOpen((v) => !v)}
+                  className="flex flex-1 items-center gap-2 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-300 hover:text-accent-500"
+                >
+                  <span className={`text-ink-500 transition-transform ${manualOpen ? 'rotate-90' : ''}`} aria-hidden>›</span>
+                  <span className="text-accent-500">↑</span> Загрузки · <span className="text-accent-500">{cloudManualFiltered.length}</span>
+                </button>
+              </div>
+              {manualOpen && cloudManualFiltered.map((c) => (
+                <RecCard
+                  key={`m-${c.id}`}
+                  active={openCloudId === c.id}
+                  onClick={() => { setOpenCloudId(c.id); setOpenId(null); }}
+                  title={baseName(c.name).replace(/^upload_[A-Za-z0-9]+_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}_/, '')}
+                  meta={[fmtTime(c.recorded_at), c.duration_sec != null ? `${Math.round(c.duration_sec)}s` : '', c.status === 'error' ? 'ошибка' : ''].filter(Boolean)}
+                  tag="UPLOAD"
+                  tagError={c.status === 'error'}
+                />
+              ))}
             </div>
           )}
 
@@ -244,22 +276,6 @@ export function SessionsView({ getToken, onGoToRecord }: SessionsViewProps) {
                   tag="LOCAL"
                 />
               ))}
-              {localOpen && rowsFiltered.length === 0 && dateFilter && (
-                <div className="rounded-lg border border-ink-800 bg-ink-900/30 p-3 text-center text-[11px] text-ink-500">
-                  Нет локальных записей за {dateFilter}
-                </div>
-              )}
-            </div>
-          )}
-
-          {showCloud && !showLocal && cloud.length === 0 && (
-            <div className="rounded-xl border border-ink-800 bg-ink-900/40 p-6 text-center text-sm text-ink-400">
-              Облачных записей пока нет.
-            </div>
-          )}
-          {showLocal && !showCloud && rows.length === 0 && (
-            <div className="rounded-xl border border-ink-800 bg-ink-900/40 p-6 text-center text-sm text-ink-400">
-              Локальных записей пока нет.
             </div>
           )}
         </aside>
@@ -461,7 +477,7 @@ function Accordion({
   );
 }
 
-function AudioPlayer({ recId, getToken, onLoaded }: { recId: number; getToken: GetToken; onLoaded?: (blob: Blob, url: string) => void }) {
+function AudioPlayer({ recId, getToken }: { recId: number; getToken: GetToken }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -488,7 +504,6 @@ function AudioPlayer({ recId, getToken, onLoaded }: { recId: number; getToken: G
       const blob = await res.blob();
       const u = URL.createObjectURL(blob);
       setUrl(u);
-      onLoaded?.(blob, u);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -525,9 +540,6 @@ function AudioPlayer({ recId, getToken, onLoaded }: { recId: number; getToken: G
   );
 }
 
-/** Naive speaker-hint heuristic: split transcript on long pauses / line breaks /
- *  sentence-ending punctuation patterns and alternate Speaker 1 / Speaker 2.
- *  This is a UI affordance — true diarization requires Deepgram/AssemblyAI. */
 function splitBySpeakers(text: string): { speaker: number; text: string }[] {
   const cleaned = text.trim();
   if (!cleaned) return [];
@@ -584,7 +596,6 @@ function TranscriptView({ text }: { text: string }) {
   );
 }
 
-/** Download menu for cloud records. */
 function CloudDownloadMenu({
   rec, getToken,
 }: { rec: CloudRow; getToken: GetToken }) {
@@ -730,6 +741,7 @@ function MenuItem({ onClick, children, hint, disabled }: { onClick: () => void |
 function CloudPane({ rec, getToken }: { rec: CloudRow; getToken: GetToken }) {
   const [copied, setCopied] = useState(false);
   const ins = rec.insights as any;
+  const manual = isManual(rec);
 
   const handleCopy = async () => {
     let text = `# ${baseName(rec.name)}\n`;
@@ -765,13 +777,21 @@ function CloudPane({ rec, getToken }: { rec: CloudRow; getToken: GetToken }) {
   sections.push({ num: pad(sections.length), key: 'transcript' });
   const numFor = (key: string) => sections.find((s) => s.key === key)?.num ?? '00';
 
+  // Strip the upload_<userId>_<ts>_ prefix for manual uploads to show the user
+  // a friendlier title.
+  const displayName = manual
+    ? baseName(rec.name).replace(/^upload_[A-Za-z0-9]+_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}_/, '')
+    : baseName(rec.name);
+
   return (
     <section className="rounded-xl border border-ink-800 bg-ink-900/40 p-6">
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-ink-800 pb-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">{baseName(rec.name)}</h2>
+          <h2 className="text-2xl font-bold tracking-tight">{displayName}</h2>
           <p className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
-            <span className="rounded-full border border-accent-500/40 bg-accent-500/10 px-2.5 py-0.5 text-accent-500">☁ облако</span>
+            <span className="rounded-full border border-accent-500/40 bg-accent-500/10 px-2.5 py-0.5 text-accent-500">
+              {manual ? '↑ загрузка' : '☁ облако'}
+            </span>
             <span className="rounded-full border border-ink-800 bg-ink-900 px-2.5 py-0.5 text-ink-300">{fmtTime(rec.recorded_at)}</span>
             {rec.duration_sec != null && (
               <span className="rounded-full border border-ink-800 bg-ink-900 px-2.5 py-0.5 text-ink-300">{(rec.duration_sec / 60).toFixed(1)} мин</span>
