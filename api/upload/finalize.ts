@@ -20,7 +20,7 @@ import { errorResponse, HttpError, json, requireUser } from '../_lib/auth.js';
 import { admin } from '../_lib/supabase.js';
 
 export const config = { runtime: 'nodejs' };
-export const maxDuration = 300;
+export const maxDuration = 800;
 const BUCKET = 'manual-uploads';
 
 interface FinalizeBody {
