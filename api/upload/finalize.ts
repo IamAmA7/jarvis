@@ -15,8 +15,7 @@
 import { errorResponse, HttpError, json, requireUser } from '../_lib/auth';
 import { admin } from '../_lib/supabase';
 
-export const config = { runtime: 'edge' };
-
+export const config = { runtime: 'nodejs', maxDuration: 300 };
 const BUCKET = 'manual-uploads';
 
 interface FinalizeBody {
