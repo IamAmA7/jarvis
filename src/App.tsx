@@ -36,7 +36,14 @@ import {
 } from './lib/settings';
 import { clearSessions } from './lib/storage';
 import { identifyUser, track } from './lib/telemetry';
-import type { AppView, Session } from './types';
+import type { AppView, Insight, Session } from './types';
+
+interface UploadResult {
+  transcript: string;
+  language: string;
+  durationSec: number;
+  insight: Insight | null;
+}
 
 const VIEWS: AppView[] = ['record', 'sessions', 'settings', 'billing'];
 
@@ -139,10 +146,10 @@ function SignedInApp() {
 
   useSessionSync({ getToken, session, enabled: userId !== null });
 
-  const handleClear = useCallback(() => {
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);  const handleClear = useCallback(() => {
     recorder.stop();
     transcription.clear();
-    insights.reset();
+    insights.reset();    setUploadResult(null);
     setSessionId(makeId('s_'));
     setSessionStart(Date.now());
   }, [recorder, transcription, insights]);
@@ -153,7 +160,7 @@ function SignedInApp() {
     persistSettings(DEFAULT_SETTINGS);
   }, [handleClear, persistSettings]);
 
-  const hasAnyWork = session.chunks.length > 0 || session.insight !== null;
+  const hasAnyWork = session.chunks.length > 0 || session.insight !== null || uploadResult !== null;
   const lastError =
     recorder.error ?? transcription.lastError ?? insights.lastError ?? null;
 
@@ -189,7 +196,7 @@ function SignedInApp() {
             quotaExceeded={usage.snapshot?.allowed === false}
             hidDeviceName={hid.deviceName}
             getToken={getToken}
-            onUploaded={() => changeView('sessions')}
+            onUploaded={() => changeView('sessions')} uploadResult={uploadResult} setUploadResult={setUploadResult}
           />
         )}
         {view === 'settings' && (
@@ -233,7 +240,7 @@ interface RecordViewProps {
   quotaExceeded: boolean;
   hidDeviceName: string | null;
   getToken: GetToken;
-  onUploaded: () => void;
+  onUploaded: () => void; uploadResult: UploadResult | null; setUploadResult: (r: UploadResult | null) => void;
 }
 
 function RecordView({
@@ -251,7 +258,7 @@ function RecordView({
   quotaExceeded,
   hidDeviceName,
   getToken,
-  onUploaded,
+  onUploaded, uploadResult, setUploadResult,
 }: RecordViewProps) {
   return (
     <>
@@ -292,16 +299,16 @@ function RecordView({
         </div>
       </div>
 
-      <UploadCard getToken={getToken} onUploaded={onUploaded} />
+      <UploadCard getToken={getToken} onUploaded={onUploaded} onResult={setUploadResult} />
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
         <TranscriptPanel
-          chunks={transcription.chunks}
+          chunks={uploadResult ? [{id:'upload', capturedAt: Date.now(), text: uploadResult.transcript, language: uploadResult.language, segments: [], status: 'final' as const}] : transcription.chunks}
           pendingCount={transcription.pendingCount}
           error={transcription.lastError}
         />
         <InsightsPanel
-          insight={insights.insight}
+          insight={uploadResult ? uploadResult.insight : insights.insight}
           loading={insights.loading}
           error={insights.lastError}
           onRegenerate={() => insights.regenerate(transcription.chunks)}
@@ -332,7 +339,7 @@ type UploadStatus =
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // Whisper API single-call limit
 
-function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: () => void }) {
+function UploadCard({ getToken, onUploaded, onResult }: { getToken: GetToken; onUploaded: () => void; onResult: (r: { transcript: string; language: string; durationSec: number; insight: Insight | null }) => void }) {
   const [status, setStatus] = useState<UploadStatus>({ kind: 'idle' });
   const [drag, setDrag] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -422,7 +429,7 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
           throw new Error(`Обработка не удалась: ${detail}`);
         }
 
-        track('upload:success', { size: file.size, type: file.type });
+        const finalizeData = (await finalizeRes.json()) as { id: string; transcript: string; language: string; duration: number; insights: Insight | null }; onResult({ transcript: finalizeData.transcript, language: finalizeData.language, durationSec: finalizeData.duration, insight: finalizeData.insights }); track('upload:success', { size: file.size, type: file.type });
         setStatus({ kind: 'success', objectName: init.path });
       } catch (err) {
         track('upload:error', {
@@ -434,7 +441,7 @@ function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: 
         });
       }
     },
-    [getToken],
+    [getToken, onResult],
   );
 
   const onPick = (e: ChangeEvent<HTMLInputElement>) => {
