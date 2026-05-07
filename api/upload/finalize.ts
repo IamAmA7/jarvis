@@ -18,9 +18,9 @@
  *   Deepgram nova-2 runs ~10-20× faster, fitting comfortably within the limit.
  */
 import { errorResponse, HttpError, json, requireUser } from '../_lib/auth.js';
-import { admin } from '../_lib/supabase.js';
+import { admin } from '../_lib/supabase.js'; import type { IncomingMessage, ServerResponse } from 'http';
 
-export const config = { runtime: 'edge' };const BUCKET = 'manual-uploads';
+export const maxDuration = 300;const BUCKET = 'manual-uploads';
 
 interface FinalizeBody {
   path: string;
@@ -137,7 +137,7 @@ async function generateInsights(transcript: string): Promise<ClaudeInsights | nu
   }
 }
 
-export default async function handler(req: Request): Promise<Response> {
+async function impl(req: Request): Promise<Response> {
   const t0 = Date.now();
   try {
     const { userId } = await requireUser(req);
@@ -217,3 +217,24 @@ export default async function handler(req: Request): Promise<Response> {
     return errorResponse(err);
   }
 }
+
+// Node.js serverless wrapper around the Edge-style impl(). We adapt the Node
+// IncomingMessage to a fetch Request so requireUser() (which expects a Web
+// Request) keeps working unchanged. We're on Node serverless because Edge has
+// a hard ~25s init-response wall that Claude (~20s) blew through.
+export default async function handler(req: IncomingMessage & { body?: unknown }, res: ServerResponse): Promise<void> {
+  const host = req.headers.host || 'localhost';
+    const url = `https://${host}${req.url || '/'}`;
+      const headers = new Headers();
+        for (const [k, v] of Object.entries(req.headers)) {
+            if (typeof v === 'string') headers.set(k, v);
+                else if (Array.isArray(v)) headers.set(k, v.join(', '));
+                  }
+  const bodyStr = req.body !== undefined ? JSON.stringify(req.body) : undefined;
+  const webReq = new Request(url, { method: req.method || 'POST', headers, body: bodyStr && req.method !== 'GET' && req.method !== 'HEAD' ? bodyStr : undefined });
+  const webRes = await impl(webReq);
+  res.statusCode = webRes.status;
+  webRes.headers.forEach((v, k) => res.setHeader(k, v));
+  const buf = Buffer.from(await webRes.arrayBuffer());
+  res.end(buf);
+}                                
