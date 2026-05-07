@@ -40,7 +40,6 @@ export default async function handler(req: Request): Promise<Response> {
     const { userId } = await requireUser(req);
     const supa = admin();
 
-    // Owner's own records.
     const ownPromise = supa
       .from('gcs_synced_files')
       .select(SELECT_COLS)
@@ -48,8 +47,6 @@ export default async function handler(req: Request): Promise<Response> {
       .order('recorded_at', { ascending: false, nullsFirst: false })
       .limit(500);
 
-    // Records shared with this user. Best-effort: if the Clerk lookup fails or
-    // the user has no grants, we still return the owner's own list.
     const myEmail = await fetchUserEmail(userId);
     const grantsPromise = myEmail
       ? supa
@@ -61,14 +58,13 @@ export default async function handler(req: Request): Promise<Response> {
 
     const [ownRes, grantsRes] = await Promise.all([ownPromise, grantsPromise]);
     if (ownRes.error) throw new HttpError(500, ownRes.error.message);
-    const own = ownRes.data ?? [];
+    const own: any[] = ownRes.data ?? [];
     const grants = grantsRes.error ? [] : grantsRes.data ?? [];
 
-    // Map owner_user_id -> owner_email so we can tag shared records below.
     const ownerEmailById = new Map<string, string>();
     for (const g of grants) ownerEmailById.set(g.owner_user_id, g.owner_email);
 
-    let shared: typeof own = [];
+    let shared: any[] = [];
     if (ownerEmailById.size > 0) {
       const ownerIds = Array.from(ownerEmailById.keys());
       const { data: sharedData, error: sharedErr } = await supa
@@ -81,25 +77,15 @@ export default async function handler(req: Request): Promise<Response> {
       if (!sharedErr && sharedData) shared = sharedData;
     }
 
-    // Tag each row with sharedFromEmail (null for own records). Strip
-    // clerk_user_id from the response — recipients shouldn't see owner ids.
-    const tagged = [
-      ...own.map((r) => {
-        const { clerk_user_id, ...rest } = r as Record<string, unknown>;
-        void clerk_user_id;
-        return { ...rest, sharedFromEmail: null as string | null };
-      }),
-      ...shared.map((r) => {
-        const { clerk_user_id, ...rest } = r as Record<string, unknown>;
-        const ownerEmail = ownerEmailById.get(clerk_user_id as string) ?? null;
-        return { ...rest, sharedFromEmail: ownerEmail };
-      }),
+    // Tag each row. Strip clerk_user_id before returning (don't leak owner ids).
+    const tagged: any[] = [
+      ...own.map((r) => ({ ...r, clerk_user_id: undefined, sharedFromEmail: null as string | null })),
+      ...shared.map((r) => ({ ...r, clerk_user_id: undefined, sharedFromEmail: ownerEmailById.get(r.clerk_user_id) ?? null })),
     ];
 
-    // Merge and sort by recorded_at desc.
     tagged.sort((a, b) => {
-      const ta = a.recorded_at ? new Date(a.recorded_at as string).getTime() : 0;
-      const tb = b.recorded_at ? new Date(b.recorded_at as string).getTime() : 0;
+      const ta = a.recorded_at ? new Date(a.recorded_at).getTime() : 0;
+      const tb = b.recorded_at ? new Date(b.recorded_at).getTime() : 0;
       return tb - ta;
     });
 
