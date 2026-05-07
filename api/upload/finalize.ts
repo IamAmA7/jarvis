@@ -4,7 +4,7 @@
  * After the browser PUTs the file to Supabase Storage via /api/upload/init's
  * signed URL, it calls this endpoint to:
  *   1. Download the file server-side from Supabase Storage
- *   2. Send to OpenAI Whisper for transcription
+ *   2. Send to Deepgram for transcription (faster than Whisper for long audio)
  *   3. Send transcript to Claude for structured insights
  *   4. Insert into `gcs_synced_files` with `bucket = 'manual'` so it shows
  *      up in История alongside cloud recordings, but tagged as a manual upload.
@@ -12,15 +12,17 @@
  * No interaction with GCS — the cloud sync (Raspberry Pi → GCS bucket → cron)
  * is a separate pipeline and is unaffected.
  *
- * Runs on Node.js serverless (not Edge) so we can give Whisper enough time
- * (up to 5 min) for larger files. Imports use .js extensions because Vercel's
- * Node.js runtime resolves modules with strict ESM rules.
+ * Why Deepgram instead of Whisper:
+ *   Whisper processes audio at ~1× real-time, so a 25 MB / 25 min file takes
+ *   ~10 min on OpenAI's side, which exceeds Vercel Pro's 300 s serverless cap.
+ *   Deepgram nova-2 runs ~10-20× faster, fitting comfortably within the limit.
  */
 import { errorResponse, HttpError, json, requireUser } from '../_lib/auth.js';
 import { admin } from '../_lib/supabase.js';
 
 export const config = { runtime: 'nodejs' };
-export const maxDuration = 800;
+export const maxDuration = 300;
+
 const BUCKET = 'manual-uploads';
 
 interface FinalizeBody {
@@ -49,30 +51,50 @@ Return ONLY a single JSON object with this exact shape (no markdown, no commenta
 
 If a section has no items, return an empty array. Use the same language as the transcript.`;
 
-async function transcribeWhisper(blob: Blob, filename: string): Promise<{ text: string; language: string | null; duration: number | null }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new HttpError(500, 'OPENAI_API_KEY env var is missing');
+async function transcribeDeepgram(blob: Blob, contentType: string): Promise<{ text: string; language: string | null; duration: number | null }> {
+  const apiKey = process.env.DEEPGRAM_API_KEY;
+  if (!apiKey) throw new HttpError(500, 'DEEPGRAM_API_KEY env var is missing');
 
-  const form = new FormData();
-  form.append('file', blob, filename);
-  form.append('model', 'whisper-1');
-  form.append('response_format', 'verbose_json');
+  // nova-2 + smart_format gives us punctuation, capitalization, paragraphs.
+  // detect_language autodetects RU/EN/etc. from the audio.
+  const url =
+    'https://api.deepgram.com/v1/listen' +
+    '?model=nova-2' +
+    '&smart_format=true' +
+    '&detect_language=true' +
+    '&punctuate=true';
 
-  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+  const res = await fetch(url, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
+    headers: {
+      Authorization: `Token ${apiKey}`,
+      'Content-Type': contentType || 'audio/mpeg',
+    },
+    body: blob,
   });
   if (!res.ok) {
     const detail = (await res.text()).slice(0, 400);
-    throw new HttpError(502, `Whisper failed: ${res.status} ${detail}`);
+    throw new HttpError(502, `Deepgram failed: ${res.status} ${detail}`);
   }
-  const data = (await res.json()) as { text?: string; language?: string; duration?: number };
-  return {
-    text: data.text ?? '',
-    language: data.language ?? null,
-    duration: typeof data.duration === 'number' ? data.duration : null,
+
+  const data = (await res.json()) as {
+    results?: {
+      channels?: Array<{
+        detected_language?: string;
+        alternatives?: Array<{ transcript?: string; paragraphs?: { transcript?: string } }>;
+      }>;
+    };
+    metadata?: { duration?: number };
   };
+
+  const channel = data.results?.channels?.[0];
+  const alt = channel?.alternatives?.[0];
+  // Prefer paragraph-formatted transcript (with line breaks) when available.
+  const transcript = alt?.paragraphs?.transcript || alt?.transcript || '';
+  const duration = typeof data.metadata?.duration === 'number' ? data.metadata.duration : null;
+  const language = channel?.detected_language ?? null;
+
+  return { text: transcript, language, duration };
 }
 
 async function generateInsights(transcript: string): Promise<ClaudeInsights | null> {
@@ -119,6 +141,7 @@ async function generateInsights(transcript: string): Promise<ClaudeInsights | nu
 }
 
 export default async function handler(req: Request): Promise<Response> {
+  const t0 = Date.now();
   try {
     const { userId } = await requireUser(req);
     if (req.method !== 'POST') throw new HttpError(405, 'POST only');
@@ -128,7 +151,6 @@ export default async function handler(req: Request): Promise<Response> {
       throw new HttpError(400, 'path and filename required');
     }
 
-    // Path safety: must start with the calling user's prefix.
     const userPrefix = userId.replace(/[^A-Za-z0-9]/g, '');
     if (!body.path.startsWith(`${userPrefix}/`)) {
       throw new HttpError(403, 'Path does not belong to you');
@@ -137,19 +159,29 @@ export default async function handler(req: Request): Promise<Response> {
     const supa = admin();
 
     // 1. Download from Supabase Storage.
+    const tDownload = Date.now();
     const { data: blob, error: dlErr } = await supa.storage.from(BUCKET).download(body.path);
     if (dlErr || !blob) {
       throw new HttpError(500, `Storage download failed: ${dlErr?.message ?? 'no blob'}`);
     }
+    // eslint-disable-next-line no-console
+    console.log(`[finalize] download: ${Date.now() - tDownload}ms, size: ${blob.size}`);
 
-    // 2. Transcribe.
-    const transcribed = await transcribeWhisper(blob, body.filename);
+    // 2. Transcribe via Deepgram.
+    const tTranscribe = Date.now();
+    const transcribed = await transcribeDeepgram(blob, body.contentType ?? 'audio/mpeg');
+    // eslint-disable-next-line no-console
+    console.log(
+      `[finalize] deepgram: ${Date.now() - tTranscribe}ms, chars: ${transcribed.text.length}, lang: ${transcribed.language}, duration: ${transcribed.duration}s`,
+    );
 
     // 3. Insights (best-effort).
+    const tInsights = Date.now();
     const insights = await generateInsights(transcribed.text);
+    // eslint-disable-next-line no-console
+    console.log(`[finalize] insights: ${Date.now() - tInsights}ms`);
 
-    // 4. Save metadata. Reuse `gcs_synced_files` table with `bucket='manual'`
-    //    so the file shows up in История through the existing /api/cloud listing.
+    // 4. Save metadata.
     const now = new Date().toISOString();
     const insertRow = {
       bucket: 'manual',
@@ -175,6 +207,8 @@ export default async function handler(req: Request): Promise<Response> {
       throw new HttpError(500, `DB insert failed: ${insertErr.message}`);
     }
 
+    // eslint-disable-next-line no-console
+    console.log(`[finalize] total: ${Date.now() - t0}ms`);
     return json(200, {
       id: inserted.id,
       transcript: transcribed.text,
