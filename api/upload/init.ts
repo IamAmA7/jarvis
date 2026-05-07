@@ -1,19 +1,16 @@
 /**
- * POST /api/upload/init — initiate a direct browser → GCS upload.
+ * POST /api/upload/init — start a chunked browser → GCS upload.
  *
- * Browser uploads of audio files exceed Vercel's 4.5MB body limit, so we
- * mint a V2 signed PUT URL pointing at the same bucket the GCS sync cron
- * watches. The browser PUTs the file straight to GCS; the existing sync
- * picks it up on its next tick (≤5 min) and runs the standard
- * transcription + insights pipeline.
+ * Direct browser → GCS uploads require bucket-level CORS, which our service
+ * account may not have permission to configure. Instead we proxy uploads
+ * through Vercel: this endpoint creates a GCS resumable upload session and
+ * hands the session URL back to the client. The client then chunks the file
+ * and POSTs each chunk to /api/upload/chunk, which forwards it to GCS with
+ * the proper Content-Range. This avoids GCS CORS entirely (browser only
+ * talks to our origin).
  *
- * The object is named `upload_<userPrefix>_<timestamp>_<filename>` so the
- * sync script (which infers ownership from the bucket) can keep its
- * single-user assumption while still letting us trace uploads back.
- *
- * The endpoint also ensures the bucket has CORS configured for browser PUTs.
- * This is idempotent — we only patch CORS if the existing config doesn't
- * already permit PUT from any origin.
+ * The uploaded object lands in the same `aa_audio_2026` bucket the GCS
+ * sync cron already watches — no changes to the sync pipeline.
  */
 import { SignJWT, importPKCS8 } from 'jose';
 import { errorResponse, HttpError, json, requireUser } from '../_lib/auth';
@@ -44,12 +41,9 @@ function loadServiceAccount(): ServiceAccount {
   };
 }
 
-async function importKey(sa: ServiceAccount): Promise<CryptoKey> {
-  return importPKCS8(sa.private_key, 'RS256') as Promise<CryptoKey>;
-}
-
-async function getAccessToken(sa: ServiceAccount, key: CryptoKey, scope: string): Promise<string> {
+async function getAccessToken(sa: ServiceAccount, scope: string): Promise<string> {
   const tokenUri = sa.token_uri || GOOGLE_TOKEN_URL;
+  const key = await importPKCS8(sa.private_key, 'RS256');
   const issuedAt = Math.floor(Date.now() / 1000);
   const assertion = await new SignJWT({ scope })
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT' })
@@ -76,62 +70,6 @@ async function getAccessToken(sa: ServiceAccount, key: CryptoKey, scope: string)
   return data.access_token;
 }
 
-interface CorsRule {
-  origin?: string[];
-  method?: string[];
-  responseHeader?: string[];
-  maxAgeSeconds?: number;
-}
-
-async function ensureBucketCors(token: string): Promise<void> {
-  const url = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(BUCKET)}?fields=cors`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    return;
-  }
-  const data = (await res.json()) as { cors?: CorsRule[] };
-  const existing = Array.isArray(data.cors) ? data.cors : [];
-  const allowsPut = existing.some(
-    (c) => Array.isArray(c.method) && c.method.includes('PUT'),
-  );
-  if (allowsPut) return;
-  const next: CorsRule[] = [
-    ...existing,
-    {
-      origin: ['*'],
-      method: ['PUT', 'POST', 'GET', 'HEAD', 'OPTIONS'],
-      responseHeader: ['Content-Type', 'Content-Length', 'ETag', 'x-goog-resumable', 'x-goog-meta-*'],
-      maxAgeSeconds: 3600,
-    },
-  ];
-  await fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(BUCKET)}`, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ cors: next }),
-  });
-}
-
-/** GCS V2 signed URL — simpler than V4 and still supported. */
-async function signV2Put(
-  _sa: ServiceAccount,
-  key: CryptoKey,
-  contentType: string,
-  expiresUnix: number,
-  resourcePath: string,
-): Promise<string> {
-  const stringToSign = `PUT\n\n${contentType}\n${expiresUnix}\n${resourcePath}`;
-  const data = new TextEncoder().encode(stringToSign);
-  const sigBuf = await crypto.subtle.sign({ name: 'RSASSA-PKCS1-v1_5' }, key, data);
-  const bytes = new Uint8Array(sigBuf);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  const b64 = btoa(bin);
-  return encodeURIComponent(b64);
-}
-
 function safeName(name: string): string {
   const cleaned = name
     .normalize('NFKD')
@@ -142,6 +80,34 @@ function safeName(name: string): string {
   return cleaned || 'file';
 }
 
+async function startResumableSession(
+  token: string,
+  objectName: string,
+  contentType: string,
+  size: number,
+): Promise<string> {
+  const url =
+    `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(BUCKET)}/o` +
+    `?uploadType=resumable&name=${encodeURIComponent(objectName)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=UTF-8',
+      'X-Upload-Content-Type': contentType,
+      'X-Upload-Content-Length': String(size),
+    },
+    body: JSON.stringify({ name: objectName, contentType }),
+  });
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 300);
+    throw new HttpError(502, `GCS resumable init failed: ${res.status} ${detail}`);
+  }
+  const sessionUrl = res.headers.get('Location') || res.headers.get('location');
+  if (!sessionUrl) throw new HttpError(502, 'GCS did not return resumable session URL');
+  return sessionUrl;
+}
+
 export default async function handler(req: Request): Promise<Response> {
   try {
     const { userId } = await requireUser(req);
@@ -150,42 +116,30 @@ export default async function handler(req: Request): Promise<Response> {
     const body = (await req.json().catch(() => null)) as
       | { filename?: string; contentType?: string; size?: number }
       | null;
-    if (!body || !body.filename) throw new HttpError(400, 'filename required');
+    if (!body || !body.filename || typeof body.size !== 'number') {
+      throw new HttpError(400, 'filename and size required');
+    }
 
-    const MAX_SIZE = 200 * 1024 * 1024;
-    if (typeof body.size === 'number' && body.size > MAX_SIZE) {
-      throw new HttpError(413, `Файл слишком большой (макс. 200 MB)`);
+    const MAX_SIZE = 500 * 1024 * 1024;
+    if (body.size > MAX_SIZE) {
+      throw new HttpError(413, 'Файл слишком большой (макс. 500 MB)');
     }
 
     const filename = safeName(body.filename);
     const contentType = (body.contentType || 'application/octet-stream').slice(0, 100);
-
-    const sa = loadServiceAccount();
-    const key = await importKey(sa);
-
-    const writeToken = await getAccessToken(sa, key, GCS_RW_SCOPE);
-    await ensureBucketCors(writeToken);
-
     const userPrefix = userId.replace(/[^A-Za-z0-9]/g, '').slice(0, 24) || 'anon';
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const objectName = `upload_${userPrefix}_${ts}_${filename}`;
 
-    const expires = Math.floor(Date.now() / 1000) + 600;
-    const resourcePath = `/${BUCKET}/${encodeURIComponent(objectName).replace(/%2F/g, '/')}`;
-    const sig = await signV2Put(sa, key, contentType, expires, resourcePath);
-
-    const uploadUrl =
-      `https://storage.googleapis.com${resourcePath}` +
-      `?GoogleAccessId=${encodeURIComponent(sa.client_email)}` +
-      `&Expires=${expires}` +
-      `&Signature=${sig}`;
+    const sa = loadServiceAccount();
+    const token = await getAccessToken(sa, GCS_RW_SCOPE);
+    const sessionUrl = await startResumableSession(token, objectName, contentType, body.size);
 
     return json(200, {
-      uploadUrl,
+      sessionUrl,
       objectName,
       bucket: BUCKET,
       contentType,
-      expiresAt: expires,
     });
   } catch (err) {
     return errorResponse(err);
