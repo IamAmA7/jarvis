@@ -9,6 +9,7 @@ import {
   type DragEvent as ReactDragEvent,
 } from 'react';
 import { BillingView } from './components/BillingView';
+import { SharingPanel } from './components/SharingPanel';
 import { ContextInput } from './components/ContextInput';
 import { Controls } from './components/Controls';
 import { ExportBar } from './components/ExportBar';
@@ -45,7 +46,7 @@ interface UploadResult {
   insight: Insight | null;
 }
 
-const VIEWS: AppView[] = ['record', 'sessions', 'settings', 'billing'];
+const VIEWS: AppView[] = ['record', 'sessions', 'settings', 'billing', 'access'];
 
 export default function App() {
   return (
@@ -219,6 +220,9 @@ function SignedInApp() {
             usage={usage.snapshot}
             onRefresh={usage.refresh}
           />
+        )}
+        {view === 'access' && (
+          <SharingPanel getToken={getToken} />
         )}
       </main>
     </div>
