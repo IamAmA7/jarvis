@@ -1,5 +1,13 @@
 import { SignedIn, SignedOut, SignIn } from '@clerk/clerk-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent as ReactDragEvent,
+} from 'react';
 import { BillingView } from './components/BillingView';
 import { ContextInput } from './components/ContextInput';
 import { Controls } from './components/Controls';
@@ -18,6 +26,7 @@ import { useTranscription } from './hooks/useTranscription';
 import { useUsage } from './hooks/useUsage';
 import { useWebHID } from './hooks/useWebHID';
 import { useJarvisAuth } from './lib/auth';
+import type { GetToken } from './lib/api';
 import { makeId } from './lib/ids';
 import {
   DEFAULT_SETTINGS,
@@ -91,7 +100,6 @@ function SignedInApp() {
   }, []);
 
   // ————— Recording stack —————
-
   const transcription = useTranscription({ settings, getToken });
   const insights = useInsights({
     settings,
@@ -113,7 +121,6 @@ function SignedInApp() {
 
   const recorder = useAudioRecorder({ onChunk: handleChunk });
 
-  // Optional push-to-talk via connected HID device (foot pedal, jog dial…)
   const hid = useWebHID({
     enabled: settings.pushToTalkEnabled,
     onButtonPress: () => {
@@ -136,7 +143,6 @@ function SignedInApp() {
     [sessionId, sessionStart, context, transcription.chunks, insights.insight],
   );
 
-  // Push the live session to Supabase as it grows.
   useSessionSync({ getToken, session, enabled: userId !== null });
 
   const handleClear = useCallback(() => {
@@ -172,7 +178,6 @@ function SignedInApp() {
           void signOut();
         }}
       />
-
       <main className="flex min-h-0 flex-1 flex-col gap-4 p-4 md:p-6">
         {view === 'record' && (
           <RecordView
@@ -189,9 +194,10 @@ function SignedInApp() {
             lastError={lastError}
             quotaExceeded={usage.snapshot?.allowed === false}
             hidDeviceName={hid.deviceName}
+            getToken={getToken}
+            onUploaded={() => changeView('sessions')}
           />
         )}
-
         {view === 'settings' && (
           <SettingsView
             settings={settings}
@@ -200,20 +206,23 @@ function SignedInApp() {
             hid={hid}
           />
         )}
-
         {view === 'sessions' && (
-          <SessionsView getToken={getToken} onGoToRecord={() => changeView('record')} />
+          <SessionsView
+            getToken={getToken}
+            onGoToRecord={() => changeView('record')}
+          />
         )}
-
         {view === 'billing' && (
-          <BillingView getToken={getToken} usage={usage.snapshot} onRefresh={usage.refresh} />
+          <BillingView
+            getToken={getToken}
+            usage={usage.snapshot}
+            onRefresh={usage.refresh}
+          />
         )}
       </main>
     </div>
   );
 }
-
-// ————— Record view —————
 
 interface RecordViewProps {
   recorder: ReturnType<typeof useAudioRecorder>;
@@ -229,6 +238,8 @@ interface RecordViewProps {
   lastError: string | null;
   quotaExceeded: boolean;
   hidDeviceName: string | null;
+  getToken: GetToken;
+  onUploaded: () => void;
 }
 
 function RecordView({
@@ -245,6 +256,8 @@ function RecordView({
   lastError,
   quotaExceeded,
   hidDeviceName,
+  getToken,
+  onUploaded,
 }: RecordViewProps) {
   return (
     <>
@@ -255,7 +268,6 @@ function RecordView({
         onOpenSettings={onOpenSettings}
         onOpenBilling={onOpenBilling}
       />
-
       <div className="flex flex-col gap-3 rounded-lg border border-ink-800 bg-ink-900/40 p-4 md:flex-row md:items-end md:justify-between">
         <div className="flex flex-1 flex-col gap-4 md:flex-row md:items-end">
           <div className="flex-1">
@@ -286,6 +298,8 @@ function RecordView({
         </div>
       </div>
 
+      <UploadCard getToken={getToken} onUploaded={onUploaded} />
+
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
         <TranscriptPanel
           chunks={transcription.chunks}
@@ -301,6 +315,210 @@ function RecordView({
         />
       </div>
     </>
+  );
+}
+
+// ————— Upload card —————
+//
+// User picks an audio/video file → we POST {filename, contentType, size} to
+// /api/upload/init which mints a V2 signed PUT URL for our GCS bucket. The
+// browser then uploads the file directly to GCS (bypassing Vercel's 4.5 MB
+// edge body limit). The existing GCS sync cron picks the file up on its next
+// tick (≤5 min) and runs the standard transcribe + insights pipeline; the
+// recording then appears under История → Облако.
+
+type UploadStatus =
+  | { kind: 'idle' }
+  | { kind: 'preparing' }
+  | { kind: 'uploading'; pct: number }
+  | { kind: 'success'; objectName: string }
+  | { kind: 'error'; message: string };
+
+function UploadCard({ getToken, onUploaded }: { getToken: GetToken; onUploaded: () => void }) {
+  const [status, setStatus] = useState<UploadStatus>({ kind: 'idle' });
+  const [drag, setDrag] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const upload = useCallback(
+    async (file: File) => {
+      const MAX = 200 * 1024 * 1024;
+      if (file.size > MAX) {
+        setStatus({ kind: 'error', message: `Файл слишком большой (${(file.size / 1024 / 1024).toFixed(1)} MB · макс. 200 MB)` });
+        return;
+      }
+      setStatus({ kind: 'preparing' });
+      try {
+        const token = await getToken();
+        if (!token) throw new Error('Не авторизованы');
+
+        const initRes = await fetch('/api/upload/init', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            filename: file.name,
+            contentType: file.type || 'application/octet-stream',
+            size: file.size,
+          }),
+        });
+        if (!initRes.ok) {
+          let detail = `${initRes.status}`;
+          try {
+            const b = (await initRes.json()) as { error?: string };
+            if (b.error) detail = b.error;
+          } catch {}
+          throw new Error(`Не удалось получить URL: ${detail}`);
+        }
+        const init = (await initRes.json()) as {
+          uploadUrl: string;
+          objectName: string;
+          contentType: string;
+        };
+
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', init.uploadUrl);
+          xhr.setRequestHeader('Content-Type', init.contentType);
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100);
+              setStatus({ kind: 'uploading', pct });
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error(`GCS отказался принимать файл: ${xhr.status} ${xhr.responseText.slice(0, 120)}`));
+          };
+          xhr.onerror = () => reject(new Error('Сетевая ошибка при загрузке. Проверьте CORS бакета.'));
+          xhr.send(file);
+        });
+
+        try {
+          await fetch('/api/cron/trigger-sync', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch {
+          /* ignored — cron will pick it up on its next tick anyway */
+        }
+
+        track('upload:success', { size: file.size, type: file.type });
+        setStatus({ kind: 'success', objectName: init.objectName });
+      } catch (err) {
+        track('upload:error', { message: err instanceof Error ? err.message : String(err) });
+        setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    [getToken],
+  );
+
+  const onPick = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) void upload(f);
+  };
+  const onDrop = (e: ReactDragEvent) => {
+    e.preventDefault();
+    setDrag(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) void upload(f);
+  };
+
+  const busy = status.kind === 'preparing' || status.kind === 'uploading';
+
+  return (
+    <div
+      onDragEnter={(e) => {
+        e.preventDefault();
+        setDrag(true);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+      }}
+      onDragLeave={() => setDrag(false)}
+      onDrop={onDrop}
+      className={`rounded-lg border bg-ink-900/40 p-4 transition-colors ${
+        drag ? 'border-accent-500 bg-accent-500/5' : 'border-ink-800'
+      }`}
+    >
+      <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
+        <div className="flex flex-1 items-center gap-3">
+          <span
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-accent-500/40 bg-accent-500/10 text-accent-500"
+            aria-hidden
+          >
+            ↑
+          </span>
+          <div>
+            <h3 className="text-sm font-semibold text-ink-100">Загрузить готовый файл</h3>
+            <p className="mt-0.5 text-xs text-ink-400">
+              Аудио/видео до 200 MB. Перетащите сюда или выберите файл — транскрипция и инсайты появятся в Истории через минуту.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            ref={inputRef}
+            type="file"
+            accept="audio/*,video/*"
+            onChange={onPick}
+            disabled={busy}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-full bg-accent-500 px-5 py-2 text-sm font-semibold text-black shadow-glow-accent hover:opacity-90 disabled:opacity-60"
+          >
+            {status.kind === 'preparing' && (
+              <>
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+                Подпись URL…
+              </>
+            )}
+            {status.kind === 'uploading' && (
+              <>
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+                Загрузка {status.pct}%
+              </>
+            )}
+            {status.kind !== 'preparing' && status.kind !== 'uploading' && (
+              <>📂 Выбрать файл</>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {status.kind === 'uploading' && (
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-ink-800">
+          <div
+            className="h-full bg-accent-500 shadow-glow-accent transition-all"
+            style={{ width: `${status.pct}%` }}
+          />
+        </div>
+      )}
+
+      {status.kind === 'success' && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-accent-500/40 bg-accent-500/10 px-3 py-2 text-xs text-accent-500">
+          <span>✓ Файл загружен. Обработка ~30–60 сек, потом смотрите в Истории.</span>
+          <button
+            type="button"
+            onClick={onUploaded}
+            className="rounded-full border border-accent-500/60 px-2.5 py-0.5 hover:bg-accent-500/10"
+          >
+            Открыть Историю →
+          </button>
+        </div>
+      )}
+
+      {status.kind === 'error' && (
+        <div className="mt-3 rounded-md border border-red-900/60 bg-red-950/30 px-3 py-2 text-xs text-red-200">
+          {status.message}
+        </div>
+      )}
+    </div>
   );
 }
 
