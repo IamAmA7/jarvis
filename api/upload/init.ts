@@ -116,7 +116,7 @@ async function ensureBucketCors(token: string): Promise<void> {
 
 /** GCS V2 signed URL — simpler than V4 and still supported. */
 async function signV2Put(
-  sa: ServiceAccount,
+  _sa: ServiceAccount,
   key: CryptoKey,
   contentType: string,
   expiresUnix: number,
