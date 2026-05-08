@@ -170,10 +170,8 @@ function SignedInApp() {
         view={view}
         onChangeView={changeView}
         recorderState={recorder.state}
-        model={settings.model}
         userName={name}
         userEmail={email}
-        usage={usage.snapshot}
         onSignOut={() => {
           track('auth:sign_out');
           void signOut();
