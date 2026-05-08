@@ -185,7 +185,6 @@ function SignedInApp() {
             recorder={recorder}
             transcription={transcription}
             insights={insights}
-            session={session}
             context={context}
             onContextChange={setContext}
             onOpenSettings={() => changeView('settings')}
@@ -232,7 +231,6 @@ interface RecordViewProps {
   recorder: ReturnType<typeof useAudioRecorder>;
   transcription: ReturnType<typeof useTranscription>;
   insights: ReturnType<typeof useInsights>;
-  session: Session;
   context: string;
   onContextChange: (v: string) => void;
   onOpenSettings: () => void;
@@ -250,7 +248,6 @@ function RecordView({
   recorder,
   transcription,
   insights,
-  session,
   context,
   onContextChange,
   onOpenSettings,
