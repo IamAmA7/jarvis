@@ -12,7 +12,6 @@ import { BillingView } from './components/BillingView';
 import { SharingPanel } from './components/SharingPanel';
 import { ContextInput } from './components/ContextInput';
 import { Controls } from './components/Controls';
-import { ExportBar } from './components/ExportBar';
 import { Header } from './components/Header';
 import { InsightsPanel } from './components/InsightsPanel';
 import { SessionsView } from './components/SessionsView';
@@ -297,9 +296,6 @@ function RecordView({
               clearDisabled={!hasAnyWork && recorder.state === 'idle'}
             />
           </div>
-        </div>
-        <div className="md:ml-4">
-          <ExportBar session={session} disabled={!hasAnyWork} />
         </div>
       </div>
 
