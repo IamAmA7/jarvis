@@ -490,7 +490,7 @@ function UploadCard({ getToken, onUploaded, onResult }: { getToken: GetToken; on
           <div>
             <h3 className="text-sm font-semibold text-ink-100">Загрузить готовый файл</h3>
             <p className="mt-0.5 text-xs text-ink-400">
-              Аудио/видео до 25 MB. Транскрипция Whisper + инсайты Claude. Появится в Истории через 30–60 сек.
+              Загрузите файл, ваш транскрипт и саммери будет готов в течении 5 минут
             </p>
           </div>
         </div>
