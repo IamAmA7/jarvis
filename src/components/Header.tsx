@@ -1,14 +1,11 @@
-import type { UsageSnapshot } from '../lib/api';
 import type { AppView, RecorderState } from '../types';
 
 interface HeaderProps {
   view: AppView;
   onChangeView: (v: AppView) => void;
   recorderState: RecorderState;
-  model: string;
   userName: string | null;
   userEmail: string | null;
-  usage: UsageSnapshot | null;
   onSignOut: () => void;
 }
 
@@ -23,10 +20,8 @@ export function Header({
   view,
   onChangeView,
   recorderState,
-  model,
   userName,
   userEmail,
-  usage,
   onSignOut,
 }: HeaderProps) {
   return (
@@ -105,7 +100,7 @@ function StatusPill({ state }: { state: RecorderState }) {
   );
 }
 
-function UsagePill({ usage, onClick }: { usage: UsageSnapshot | null; onClick: () => void }) {
+: { usage: UsageSnapshot | null; onClick: () => void }) {
   if (!usage) return null;
   if (usage.plan === 'pro') {
     return (
@@ -137,7 +132,7 @@ function UsagePill({ usage, onClick }: { usage: UsageSnapshot | null; onClick: (
   );
 }
 
-function ModelPill({ model }: { model: string }) {
+: { model: string }) {
   return (
     <span className="hidden rounded-full border border-ink-800 bg-ink-900 px-3 py-1.5 font-mono text-[11px] text-ink-300 md:inline-block">
       {model}
