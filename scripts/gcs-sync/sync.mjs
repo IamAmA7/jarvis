@@ -332,7 +332,7 @@ async function main() {
       const _hWords = text.split(' ').filter(Boolean);
       const _hUnique = new Set(_hWords.map((w) => w.toLowerCase())).size;
       if (_hWords.length > 20 && _hUnique / _hWords.length < 0.15) {
-        throw new Error('Hallucination loop: ' + _hUnique + ' unique / ' + _hWords.length + ' total');
+        console.warn('[gcs-sync]    possible repetition: ' + _hUnique + ' unique / ' + _hWords.length + ' total — keeping transcript');
       }
       let insights = null;
       if (text.length > 0) {
