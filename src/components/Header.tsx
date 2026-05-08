@@ -66,8 +66,6 @@ export function Header({
 
       <div className="order-2 flex items-center gap-2 text-xs md:order-3">
         <StatusPill state={recorderState} />
-        <UsagePill usage={usage} onClick={() => onChangeView('billing')} />
-        <ModelPill model={model} />
         <UserMenu name={userName} email={userEmail} onSignOut={onSignOut} onOpenSettings={() => onChangeView('settings')} />
       </div>
     </header>
