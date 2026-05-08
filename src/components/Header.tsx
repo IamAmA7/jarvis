@@ -100,45 +100,6 @@ function StatusPill({ state }: { state: RecorderState }) {
   );
 }
 
-: { usage: UsageSnapshot | null; onClick: () => void }) {
-  if (!usage) return null;
-  if (usage.plan === 'pro') {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className="rounded-full border border-accent-500/40 bg-accent-500/10 px-3 py-1.5 font-bold text-accent-500 hover:bg-accent-500/20"
-      >
-        PRO
-      </button>
-    );
-  }
-  const used = Math.round((usage.usedSec / 60) * 10) / 10;
-  const limit = usage.limitSec ? Math.round(usage.limitSec / 60) : '∞';
-  const warn = !usage.allowed;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        'rounded-full border px-3 py-1.5 font-mono text-[11px] ' +
-        (warn
-          ? 'border-red-900/60 bg-red-950/30 text-red-200 hover:bg-red-950/50'
-          : 'border-ink-800 bg-ink-900 text-ink-300 hover:bg-ink-800')
-      }
-    >
-      {used}/{limit} мин
-    </button>
-  );
-}
-
-: { model: string }) {
-  return (
-    <span className="hidden rounded-full border border-ink-800 bg-ink-900 px-3 py-1.5 font-mono text-[11px] text-ink-300 md:inline-block">
-      {model}
-    </span>
-  );
-}
 
 function UserMenu({
   name,
