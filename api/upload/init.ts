@@ -13,7 +13,7 @@ import { admin } from '../_lib/supabase';
 export const config = { runtime: 'edge' };
 
 const BUCKET = 'manual-uploads';
-const MAX_SIZE = 25 * 1024 * 1024; // OpenAI Whisper single-call limit
+const MAX_SIZE = 500 * 1024 * 1024; // OpenAI Whisper single-call limit
 
 function safeName(name: string): string {
   return (
@@ -40,7 +40,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (body.size > MAX_SIZE) {
       throw new HttpError(
         413,
-        `Файл слишком большой: ${(body.size / 1024 / 1024).toFixed(1)} MB. Лимит — ${MAX_SIZE / 1024 / 1024} MB (ограничение Whisper API).`,
+        `Файл слишком большой: ${(body.size / 1024 / 1024).toFixed(1)} MB. Лимит — ${MAX_SIZE / 1024 / 1024} MB (ограничение хранилища).`,
       );
     }
 
