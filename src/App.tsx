@@ -332,7 +332,7 @@ type UploadStatus =
   | { kind: 'success'; objectName: string }
   | { kind: 'error'; message: string };
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024; // Whisper API single-call limit
+const MAX_FILE_BYTES = 500 * 1024 * 1024; // Whisper API single-call limit
 
 function UploadCard({ getToken, onUploaded, onResult }: { getToken: GetToken; onUploaded: () => void; onResult: (r: { transcript: string; language: string; durationSec: number; insight: Insight | null }) => void }) {
   const [status, setStatus] = useState<UploadStatus>({ kind: 'idle' });
