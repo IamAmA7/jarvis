@@ -31,7 +31,7 @@ export default async function handler(req: Request): Promise<Response> {
     const limitRaw = Number.parseInt(url.searchParams.get('limit') ?? '24', 10);
     const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 24, 1), 168);
 
-    let query = admin
+    let query = admin()
       .from('hourly_summaries')
       .select('hour_start, summary_text, record_count, status, error_message')
       .eq('clerk_user_id', userId)
@@ -51,7 +51,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (error) throw new HttpError(500, `Load failed: ${error.message}`);
 
     const rows = (data ?? []) as SummaryRow[];
-    return json({ summaries: rows });
+    return json(200, { summaries: rows });
   } catch (err) {
     return errorResponse(err);
   }
