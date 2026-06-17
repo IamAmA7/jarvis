@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { BillingView } from './components/BillingView';
 import { SharingPanel } from './components/SharingPanel';
+import { HourlySummariesView } from './components/HourlySummariesView';
 import { ContextInput } from './components/ContextInput';
 import { Controls } from './components/Controls';
 import { Header } from './components/Header';
@@ -45,7 +46,7 @@ interface UploadResult {
   insight: Insight | null;
 }
 
-const VIEWS: AppView[] = ['record', 'sessions', 'settings', 'billing', 'access'];
+const VIEWS: AppView[] = ['record', 'sessions', 'settings', 'billing', 'access', 'summaries'];
 
 export default function App() {
   return (
@@ -219,6 +220,9 @@ function SignedInApp() {
         )}
         {view === 'access' && (
           <SharingPanel getToken={getToken} />
+        )}
+        {view === 'summaries' && (
+          <HourlySummariesView getToken={getToken} />
         )}
       </main>
     </div>
