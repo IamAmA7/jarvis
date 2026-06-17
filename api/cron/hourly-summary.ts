@@ -93,7 +93,7 @@ async function upsertSummary(row: {
   status: 'ok' | 'empty' | 'error';
   error_message: string | null;
 }): Promise<void> {
-  const { error } = await admin.from('hourly_summaries').upsert(
+  const { error } = await admin().from('hourly_summaries').upsert(
     { ...row, updated_at: new Date().toISOString() },
     { onConflict: 'clerk_user_id,hour_start' },
   );
