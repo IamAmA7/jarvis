@@ -119,7 +119,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
 
     console.log(`[hourly-summary] window: ${hourIso} -> ${currentHourStart.toISOString()}`);
 
-    const { data, error } = await admin
+    const { data, error } = await admin()
       .from('gcs_synced_files')
       .select('id, clerk_user_id, recorded_at, transcript_text, insights')
       .gte('recorded_at', hourIso)
